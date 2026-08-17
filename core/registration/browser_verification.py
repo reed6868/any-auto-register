@@ -5,6 +5,18 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 
+_COUNTRY_DIAL_CODES = {
+    "us": "1", "187": "1",
+    "ru": "7", "0": "7",
+    "uk": "44", "gb": "44", "16": "44",
+    "in": "91", "22": "91",
+    "id": "62", "6": "62",
+    "ph": "63", "4": "63",
+    "th": "66", "52": "66",
+    "br": "55", "73": "55",
+}
+
+
 def _first_visible(page, selectors: tuple[str, ...]):
     for selector in selectors:
         try:
@@ -73,6 +85,88 @@ def _inject_turnstile_response(page, token: str) -> bool:
         return False
 
 
+def _activation_dial_code(phone_callback) -> str:
+    activation = getattr(phone_callback, "activation", None)
+    if activation is None:
+        return ""
+    metadata = getattr(activation, "metadata", None)
+    metadata = metadata if isinstance(metadata, dict) else {}
+    number_info = metadata.get("number_info") if isinstance(metadata.get("number_info"), dict) else {}
+    explicit = str(number_info.get("countryPhoneCode") or metadata.get("country_phone_code") or "").strip().lstrip("+")
+    if explicit.isdigit():
+        return explicit
+    country = str(getattr(activation, "country", "") or "").strip().lower()
+    return _COUNTRY_DIAL_CODES.get(country, "")
+
+
+def _locator_value(locator) -> str:
+    try:
+        return str(locator.input_value(timeout=250) or "").strip()
+    except Exception:
+        try:
+            return str(locator.get_attribute("value") or "").strip()
+        except Exception:
+            return ""
+
+
+def _sync_phone_country_code(page, phone_callback, number: str) -> str:
+    """Best-effort sync for sites that split dial code and local phone number.
+
+    It never guesses a dial code from the phone digits alone. We only use the
+    provider activation's explicit country/dial-code metadata. If the page has
+    no separate country-code field, the original E.164 number is returned.
+    """
+    dial_code = _activation_dial_code(phone_callback)
+    if not dial_code:
+        return number
+    target = f"+{dial_code}"
+    dial_field = _first_visible(
+        page,
+        (
+            'input[value^="+"]',
+            'input[placeholder^="+"]',
+            'input[aria-label*="country" i]',
+            'input[aria-label*="dial" i]',
+        ),
+    )
+    if dial_field is None:
+        return number
+
+    current = _locator_value(dial_field)
+    if current != target:
+        changed = False
+        try:
+            dial_field.fill(target)
+            changed = _locator_value(dial_field) in {"", target}
+            try:
+                dial_field.press("Enter")
+            except Exception:
+                pass
+        except Exception:
+            changed = False
+        if not changed:
+            try:
+                dial_field.click()
+                option = page.get_by_text(target, exact=True).first
+                if option.is_visible(timeout=500):
+                    option.click()
+                    changed = True
+            except Exception:
+                changed = False
+        if not changed:
+            raise RuntimeError(f"无法将页面手机号国家区号从 {current or 'unknown'} 切换为 {target}")
+
+    compact = re.sub(r"[\s()-]", "", str(number or ""))
+    prefix = f"+{dial_code}"
+    if compact.startswith(prefix):
+        local = compact[len(prefix):]
+        return local or number
+    if compact.startswith(dial_code):
+        local = compact[len(dial_code):]
+        return local or number
+    return number
+
+
 class BrowserVerificationSupport:
     """Bridge platform-owned browser verification to configured providers."""
 
@@ -82,6 +176,7 @@ class BrowserVerificationSupport:
         captcha_solver: Any = None,
         phone_callback: Callable[[], str] | None = None,
         allowed_domain_substrings: tuple[str, ...] = (),
+        sync_phone_country_code: bool = False,
         log_fn=None,
     ):
         self.captcha_solver = captcha_solver
@@ -91,6 +186,7 @@ class BrowserVerificationSupport:
             for item in allowed_domain_substrings
             if str(item or "").strip()
         )
+        self.sync_phone_country_code = bool(sync_phone_country_code)
         self.log = log_fn or (lambda message: None)
         self._captcha_attempts: set[str] = set()
         self._phone_started = False
@@ -165,7 +261,8 @@ class BrowserVerificationSupport:
             number = str(self.phone_callback() or "").strip()
             if not number:
                 raise RuntimeError("接码 provider 未返回手机号")
-            phone_field.fill(number)
+            field_value = _sync_phone_country_code(page, self.phone_callback, number) if self.sync_phone_country_code else number
+            phone_field.fill(field_value)
             self._phone_number = number
             clicked = _click_first(
                 page,
@@ -182,11 +279,13 @@ class BrowserVerificationSupport:
                     "发送",
                 ),
             )
+            if not clicked:
+                raise RuntimeError("已填写手机号，但未找到发送短信验证码按钮")
             hook = getattr(self.phone_callback, "mark_send_succeeded", None)
-            if clicked and callable(hook):
+            if callable(hook):
                 hook()
             self._phone_started = True
-            self.log(f"[接码] 已由框架接码 provider 填入手机号: {number[:5]}****")
+            self.log(f"[接码] 已由框架接码 provider 填入手机号: {number[:5]}**** 并触发验证码发送")
             return True
 
         if self._phone_code_filled:
@@ -208,9 +307,10 @@ class BrowserVerificationSupport:
         if not code:
             raise RuntimeError("接码 provider 未返回短信验证码")
         code_field.fill(code)
-        _click_first(page, ("Log In", "Login", "Verify", "Continue", "Next", "Submit", "登录"))
+        if not _click_first(page, ("Log In", "Login", "Verify", "Continue", "Next", "Submit", "登录")):
+            raise RuntimeError("已填写短信验证码，但未找到提交/登录按钮")
         self._phone_code_filled = True
-        self.log("[接码] 已由框架接码 provider 填入短信验证码")
+        self.log("[接码] 已由框架接码 provider 填入并提交短信验证码")
         return True
 
     def try_handle(self, page) -> bool:
