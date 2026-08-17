@@ -98,11 +98,23 @@ def test_turnstile_uses_framework_solver_and_injects_response():
     assert len(solver.calls) == 1
 
 
-def test_phone_step_uses_framework_phone_callback_lazily_and_reports_success():
+def test_invisible_standard_turnstile_widget_still_uses_framework_solver():
     from core.registration.browser_verification import BrowserVerificationSupport
 
     page = FakePage()
     page.turnstile.visible = False
+    solver = FakeCaptcha()
+    support = BrowserVerificationSupport(captcha_solver=solver)
+
+    assert support.try_turnstile(page) is True
+    assert solver.calls == [(page.url, "site-key")]
+
+
+def test_phone_step_uses_framework_phone_callback_lazily_and_reports_success():
+    from core.registration.browser_verification import BrowserVerificationSupport
+
+    page = FakePage()
+    page.turnstile.attrs = {}
     page.phone.visible = True
     phone = FakePhoneCallback()
     support = BrowserVerificationSupport(phone_callback=phone)
