@@ -63,7 +63,6 @@ def test_browser_oauth_flow_inherits_lazy_captcha_phone_and_cleanup(monkeypatch)
     def run_oauth(ctx, artifacts):
         assert callable(artifacts.phone_callback)
         assert artifacts.captcha_solver is not None
-        # captcha provider is resolved lazily only when the page actually needs it.
         assert "captcha-created" not in events
         assert artifacts.captcha_solver.solve_turnstile("https://example.test", "site-key") == "turnstile-token"
         assert artifacts.phone_callback() == "18885551234"
@@ -83,7 +82,7 @@ def test_browser_oauth_flow_inherits_lazy_captcha_phone_and_cleanup(monkeypatch)
     assert ("phone-cleanup", "kimi") in events
 
 
-def test_kimi_oauth_adapter_passes_framework_verification_artifacts(monkeypatch):
+def test_kimi_oauth_adapter_passes_framework_artifacts_but_not_human_challenge_by_default(monkeypatch):
     from platforms.kimi import browser_auth
     from platforms.kimi.plugin import KimiPlatform
 
@@ -109,7 +108,7 @@ def test_kimi_oauth_adapter_passes_framework_verification_artifacts(monkeypatch)
         identity=SimpleNamespace(
             oauth_provider="google",
             email="user@example.com",
-            chrome_user_data_dir="",
+            chrome_user_data_dir="/tmp/chrome-profile",
             chrome_cdp_url="",
         ),
         proxy="socks5://127.0.0.1:1080",
@@ -122,10 +121,39 @@ def test_kimi_oauth_adapter_passes_framework_verification_artifacts(monkeypatch)
     assert captured["proxy"] == "socks5://127.0.0.1:1080"
     assert captured["phone_callback"] is artifacts.phone_callback
     assert captured["captcha_solver"] is artifacts.captcha_solver
-    assert captured["challenge_callback"] is artifacts.challenge_callback
+    assert captured["challenge_callback"] is None
 
 
-def test_zai_mailbox_and_oauth_adapters_pass_framework_verification_artifacts(monkeypatch):
+def test_kimi_debug_mode_can_opt_in_human_challenge(monkeypatch):
+    from platforms.kimi import browser_auth
+    from platforms.kimi.plugin import KimiPlatform
+
+    captured = {}
+    monkeypatch.setattr(
+        browser_auth,
+        "register_with_google",
+        lambda **kwargs: captured.update(kwargs) or {"email": "user@example.com", "cookies": "k=1", "storage_state": "{}"},
+    )
+    platform = KimiPlatform(config=RegisterConfig(executor_type="headed", extra={"identity_provider": "oauth_browser"}))
+    challenge = lambda request: ChallengeResponse(completed=True)
+    artifacts = RegistrationArtifacts(challenge_callback=challenge)
+    ctx = SimpleNamespace(
+        identity=SimpleNamespace(
+            oauth_provider="google",
+            email="user@example.com",
+            chrome_user_data_dir="/tmp/chrome-profile",
+            chrome_cdp_url="",
+        ),
+        proxy=None,
+        extra={"allow_human_challenge": True},
+        log=lambda message: None,
+    )
+
+    platform._run_google_oauth(ctx, artifacts)
+    assert captured["challenge_callback"] is challenge
+
+
+def test_zai_mailbox_and_oauth_adapters_pass_framework_artifacts_without_human_wait_by_default(monkeypatch):
     from platforms.zai import browser_register
     from platforms.zai.plugin import ZAIPlatform
 
@@ -146,7 +174,7 @@ def test_zai_mailbox_and_oauth_adapters_pass_framework_verification_artifacts(mo
     assert worker.otp_callback is artifacts.otp_callback
     assert worker.phone_callback is artifacts.phone_callback
     assert worker.captcha_solver is artifacts.captcha_solver
-    assert worker.challenge_callback is artifacts.challenge_callback
+    assert worker.challenge_callback is None
 
     captured = {}
 
@@ -159,7 +187,7 @@ def test_zai_mailbox_and_oauth_adapters_pass_framework_verification_artifacts(mo
         identity=SimpleNamespace(
             oauth_provider="google",
             email="user@example.com",
-            chrome_user_data_dir="",
+            chrome_user_data_dir="/tmp/chrome-profile",
             chrome_cdp_url="",
         ),
         proxy="socks5://127.0.0.1:1080",
@@ -170,4 +198,4 @@ def test_zai_mailbox_and_oauth_adapters_pass_framework_verification_artifacts(mo
 
     assert captured["phone_callback"] is artifacts.phone_callback
     assert captured["captcha_solver"] is artifacts.captcha_solver
-    assert captured["challenge_callback"] is artifacts.challenge_callback
+    assert captured["challenge_callback"] is None
