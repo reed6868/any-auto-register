@@ -110,12 +110,7 @@ def _locator_value(locator) -> str:
 
 
 def _sync_phone_country_code(page, phone_callback, number: str) -> str:
-    """Best-effort sync for sites that split dial code and local phone number.
-
-    It never guesses a dial code from the phone digits alone. We only use the
-    provider activation's explicit country/dial-code metadata. If the page has
-    no separate country-code field, the original E.164 number is returned.
-    """
+    """Sync a separate dial-code control using provider metadata only."""
     dial_code = _activation_dial_code(phone_callback)
     if not dial_code:
         return number
@@ -159,11 +154,9 @@ def _sync_phone_country_code(page, phone_callback, number: str) -> str:
     compact = re.sub(r"[\s()-]", "", str(number or ""))
     prefix = f"+{dial_code}"
     if compact.startswith(prefix):
-        local = compact[len(prefix):]
-        return local or number
+        return compact[len(prefix):] or number
     if compact.startswith(dial_code):
-        local = compact[len(dial_code):]
-        return local or number
+        return compact[len(dial_code):] or number
     return number
 
 
@@ -191,6 +184,7 @@ class BrowserVerificationSupport:
         self._captcha_attempts: set[str] = set()
         self._phone_started = False
         self._phone_number = ""
+        self._phone_send_confirmed = False
         self._phone_code_filled = False
         self._phone_reported = False
 
@@ -240,6 +234,15 @@ class BrowserVerificationSupport:
             self.log(f"[验证] captcha provider 处理失败: {exc}")
             return False
 
+    def _confirm_phone_send(self) -> None:
+        if self._phone_send_confirmed or not self.phone_callback:
+            return
+        hook = getattr(self.phone_callback, "mark_send_succeeded", None)
+        if callable(hook):
+            hook()
+        self._phone_send_confirmed = True
+        self.log("[接码] 已进入短信验证码阶段，确认目标站已接受手机号")
+
     def try_phone(self, page) -> bool:
         if not self._is_allowed_page(page) or not self.phone_callback:
             return False
@@ -264,7 +267,7 @@ class BrowserVerificationSupport:
             field_value = _sync_phone_country_code(page, self.phone_callback, number) if self.sync_phone_country_code else number
             phone_field.fill(field_value)
             self._phone_number = number
-            clicked = _click_first(
+            if not _click_first(
                 page,
                 (
                     "Send Code",
@@ -278,14 +281,10 @@ class BrowserVerificationSupport:
                     "获取验证码",
                     "发送",
                 ),
-            )
-            if not clicked:
+            ):
                 raise RuntimeError("已填写手机号，但未找到发送短信验证码按钮")
-            hook = getattr(self.phone_callback, "mark_send_succeeded", None)
-            if callable(hook):
-                hook()
             self._phone_started = True
-            self.log(f"[接码] 已由框架接码 provider 填入手机号: {number[:5]}**** 并触发验证码发送")
+            self.log(f"[接码] 已由框架接码 provider 填入手机号: {number[:5]}**** 并点击验证码发送")
             return True
 
         if self._phone_code_filled:
@@ -303,6 +302,10 @@ class BrowserVerificationSupport:
         )
         if code_field is None:
             return False
+
+        # This is the first reliable UI evidence that the send step advanced.
+        # It deliberately occurs after any intervening captcha challenge.
+        self._confirm_phone_send()
         code = str(self.phone_callback() or "").strip()
         if not code:
             raise RuntimeError("接码 provider 未返回短信验证码")
@@ -323,6 +326,7 @@ class BrowserVerificationSupport:
     def mark_authenticated(self) -> None:
         if not self._phone_started or self._phone_reported or not self.phone_callback:
             return
+        self._confirm_phone_send()
         hook = getattr(self.phone_callback, "report_success", None)
         if callable(hook):
             hook()
