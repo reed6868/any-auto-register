@@ -40,9 +40,6 @@ def _build_browser_artifacts(
 ) -> RegistrationArtifacts:
     artifacts = RegistrationArtifacts(challenge_callback=ctx.challenge_callback)
     if use_captcha:
-        # Browser tasks must not fail at startup just because no captcha provider is
-        # configured. The provider is resolved lazily when a supported captcha is
-        # actually detected; the platform can still fall back to HumanChallenge.
         artifacts.captcha_solver = _LazyCaptchaSolver(ctx.platform)
 
     if include_mailbox_callbacks and adapter.otp_spec:
@@ -65,7 +62,6 @@ def _build_browser_artifacts(
         )
 
     # Phone providers are lazy: creating this callback does not rent a phone.
-    # It only acquires a number when a browser worker encounters a phone step.
     artifacts.phone_callback, artifacts.phone_cleanup = build_phone_callbacks(
         ctx,
         service=ctx.platform_name,
@@ -107,8 +103,6 @@ class BrowserRegistrationFlow:
                     if artifacts.phone_cleanup:
                         artifacts.phone_cleanup()
             if self.adapter.oauth_runner:
-                # Backward-compatible path for existing platform adapters that do
-                # not need framework browser artifacts.
                 raw = self.adapter.oauth_runner(ctx)
                 return self.adapter.result_mapper(ctx, raw)
 
@@ -121,10 +115,9 @@ class BrowserRegistrationFlow:
             ctx,
             self.adapter,
             include_mailbox_callbacks=True,
-            use_captcha=(
-                self.adapter.use_captcha_for_mailbox
-                and getattr(ctx.identity, "identity_provider", "") == "mailbox"
-            ),
+            # The historical flag name is kept for compatibility, but it applies
+            # to every first-party browser registration path (mailbox/phone).
+            use_captcha=self.adapter.use_captcha_for_mailbox,
         )
 
         try:
