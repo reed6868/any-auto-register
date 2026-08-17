@@ -68,6 +68,29 @@ def test_zai_plugin_builds_browser_adapter_without_protocol_registration():
     assert platform.build_protocol_oauth_adapter() is None
 
 
+def test_zai_oauth_does_not_generate_synthetic_password_but_mailbox_does():
+    from core.base_platform import RegisterConfig
+    from platforms.zai.plugin import ZAIPlatform
+
+    oauth = ZAIPlatform(
+        config=RegisterConfig(
+            executor_type="headed",
+            extra={"identity_provider": "oauth_browser", "oauth_provider": "google"},
+        )
+    )
+    assert oauth._prepare_registration_password(None) == ""
+
+    mailbox = ZAIPlatform(
+        config=RegisterConfig(
+            executor_type="headed",
+            extra={"identity_provider": "mailbox"},
+        )
+    )
+    generated = mailbox._prepare_registration_password(None)
+    assert isinstance(generated, str)
+    assert generated
+
+
 def test_zai_default_instance_can_check_saved_account_but_cannot_register_protocol():
     from core.base_platform import Account, RegisterConfig
     from platforms.zai.plugin import ZAIPlatform
