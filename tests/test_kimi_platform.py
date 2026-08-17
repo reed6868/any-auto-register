@@ -24,6 +24,11 @@ def test_kimi_auth_surface_detection_distinguishes_login_and_authenticated():
 
     assert detect_auth_surface(
         url="https://www.kimi.com/",
+        text="New Chat Kimi Claw Chats Log in to sync chat history Ask anything, or task an agent",
+    ) is AuthSurface.LANDING
+
+    assert detect_auth_surface(
+        url="https://www.kimi.com/",
         text="New Chat Chats Kimi Claw",
     ) is AuthSurface.AUTHENTICATED
 
