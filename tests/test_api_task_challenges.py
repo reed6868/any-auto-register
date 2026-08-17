@@ -56,6 +56,12 @@ def test_api_can_resolve_active_human_challenge(client):
     assert task_snapshot.status_code == 200
     assert task_snapshot.json()["result"]["challenge"]["id"] == challenge["id"]
 
+    missing_id = client.post(
+        f"/api/tasks/{task_id}/challenge",
+        json={"completed": True},
+    )
+    assert missing_id.status_code == 422
+
     response = client.post(
         f"/api/tasks/{task_id}/challenge",
         json={
