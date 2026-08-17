@@ -30,6 +30,9 @@ class _LazyCaptchaSolver:
     def solve_turnstile(self, page_url: str, site_key: str) -> str:
         return self._resolve().solve_turnstile(page_url, site_key)
 
+    def solve_geetest(self, page_url: str, params: dict, *, proxy: str = "") -> dict:
+        return self._resolve().solve_geetest(page_url, params, proxy=proxy)
+
 
 def _build_browser_artifacts(
     ctx: RegistrationContext,
@@ -61,7 +64,6 @@ def _build_browser_artifacts(
             preview_chars=adapter.link_spec.preview_chars,
         )
 
-    # Phone providers are lazy: creating this callback does not rent a phone.
     artifacts.phone_callback, artifacts.phone_cleanup = build_phone_callbacks(
         ctx,
         service=ctx.platform_name,
@@ -79,10 +81,7 @@ class BrowserRegistrationFlow:
 
         if getattr(ctx.identity, "identity_provider", "") == "oauth_browser":
             capability = self.adapter.capability
-            ensure_oauth_executor_allowed(
-                ctx,
-                capability.oauth_allowed_executor_types,
-            )
+            ensure_oauth_executor_allowed(ctx, capability.oauth_allowed_executor_types)
             if capability.oauth_headless_requires_browser_reuse and ctx.executor_type == "headless":
                 ensure_oauth_browser_reuse(
                     ctx,
@@ -115,8 +114,6 @@ class BrowserRegistrationFlow:
             ctx,
             self.adapter,
             include_mailbox_callbacks=True,
-            # The historical flag name is kept for compatibility, but it applies
-            # to every first-party browser registration path (mailbox/phone).
             use_captcha=self.adapter.use_captcha_for_mailbox,
         )
 
@@ -182,10 +179,7 @@ class ProtocolOAuthFlow:
     def run(self, ctx: RegistrationContext) -> RegistrationResult:
         if self.adapter.preflight:
             self.adapter.preflight(ctx)
-        ensure_oauth_executor_allowed(
-            ctx,
-            self.adapter.capability.oauth_allowed_executor_types,
-        )
+        ensure_oauth_executor_allowed(ctx, self.adapter.capability.oauth_allowed_executor_types)
         if self.adapter.capability.oauth_headless_requires_browser_reuse and ctx.executor_type == "headless":
             ensure_oauth_browser_reuse(
                 ctx,
