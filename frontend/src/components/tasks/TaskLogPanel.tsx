@@ -185,7 +185,17 @@ export function TaskLogPanel({
             {challenge.message || '请在当前任务的可视浏览器/noVNC 中完成验证。'}
           </div>
           {challenge.url ? (
-            <div className="mt-2 break-all font-mono text-xs text-amber-100/65">{challenge.url}</div>
+            <div className="mt-2 space-y-1.5">
+              <a
+                href={challenge.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex rounded-full border border-amber-300/40 px-3 py-1.5 text-xs font-medium text-amber-100 hover:bg-amber-200/10"
+              >
+                打开验证页面 ↗
+              </a>
+              <div className="break-all font-mono text-xs text-amber-100/65">{challenge.url}</div>
+            </div>
           ) : null}
           <div className="mt-3 flex flex-wrap gap-2">
             <button
