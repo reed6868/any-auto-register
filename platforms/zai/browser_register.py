@@ -179,6 +179,7 @@ def register_with_oauth(
         captcha_solver=captcha_solver,
         phone_callback=phone_callback,
         allowed_domain_substrings=("z.ai",),
+        sync_phone_country_code=True,
         log_fn=log_fn,
     )
     with OAuthBrowser(
@@ -198,17 +199,17 @@ def register_with_oauth(
 
         if not _wait_authenticated(browser, 8, verification=verification):
             if not challenge_callback:
-                raise RuntimeError("Z.AI OAuth 需要在可视浏览器中完成登录，但当前任务没有 HumanChallenge 回调")
+                raise RuntimeError(f"Z.AI {oauth_provider} OAuth 未能通过已复用的浏览器会话自动完成")
             response = challenge_callback(
                 ChallengeRequest(
                     kind="oauth_confirmation",
-                    message=f"请在可视浏览器中完成 Z.AI {oauth_provider} 登录，完成后返回面板确认继续",
+                    message=f"调试模式：请在可视浏览器中完成 Z.AI {oauth_provider} 登录",
                     url=str(browser.active_page().url or AUTH_URL),
                     metadata={"platform": "zai", "provider": oauth_provider},
                 )
             )
             if not response.completed:
-                raise RuntimeError("Z.AI OAuth 人工验证未完成")
+                raise RuntimeError("Z.AI OAuth 调试验证未完成")
 
         if not _wait_authenticated(browser, max(5, timeout - 8), verification=verification):
             raise RuntimeError("Z.AI OAuth 登录完成后未检测到已登录页面")
@@ -236,25 +237,25 @@ class ZAIBrowserRegister:
             captcha_solver=captcha_solver,
             phone_callback=phone_callback,
             allowed_domain_substrings=("z.ai",),
+            sync_phone_country_code=True,
             log_fn=log_fn,
         )
-        # Expose these for deterministic adapter tests and post-init integrations.
         self.captcha_solver = captcha_solver
         self.phone_callback = phone_callback
 
     def _request_human(self, page, kind: str, message: str) -> None:
         if not self.challenge_callback:
-            raise RuntimeError(f"Z.AI 需要人工处理: {message}")
+            raise RuntimeError(f"Z.AI 无人值守模式无法自动处理: {message}")
         response = self.challenge_callback(
             ChallengeRequest(
                 kind=kind,
-                message=message,
+                message=f"调试模式：{message}",
                 url=str(page.url or AUTH_URL),
                 metadata={"platform": "zai"},
             )
         )
         if not response.completed:
-            raise RuntimeError("Z.AI 人工验证未完成")
+            raise RuntimeError("Z.AI 调试验证未完成")
 
     def run(self, email: str, password: str) -> dict:
         if not email:
@@ -264,7 +265,6 @@ class ZAIBrowserRegister:
 
         with OAuthBrowser(proxy=self.proxy, headless=False, log_fn=self.log) as browser:
             browser.goto(AUTH_URL, wait_until="domcontentloaded", timeout=30000)
-            page = browser.active_page()
             deadline = time.monotonic() + self.timeout
             otp_used = False
             unknown_cycles = 0
@@ -278,8 +278,6 @@ class ZAIBrowserRegister:
                     self.verification.mark_authenticated()
                     return _capture_session(browser, email_hint=email, password=password)
 
-                # Phone and standard Turnstile steps are delegated to the framework
-                # providers before falling back to the platform-specific state machine.
                 if self.verification.try_handle(page):
                     time.sleep(1)
                     continue
@@ -295,7 +293,8 @@ class ZAIBrowserRegister:
                     if not field:
                         raise RuntimeError("Z.AI 未找到邮箱输入框")
                     field.fill(email)
-                    _click_text(page, ("Continue", "Next", "Sign Up", "Create Account", "Log In", "Login"))
+                    if not _click_text(page, ("Continue", "Next", "Sign Up", "Create Account", "Log In", "Login")):
+                        raise RuntimeError("Z.AI 已填写邮箱，但未找到继续按钮")
                     time.sleep(1)
                     continue
 
@@ -315,7 +314,8 @@ class ZAIBrowserRegister:
                                 field.fill(password)
                         except Exception:
                             pass
-                    _click_text(page, ("Sign Up", "Create Account", "Continue", "Next", "Log In", "Login"))
+                    if not _click_text(page, ("Sign Up", "Create Account", "Continue", "Next", "Log In", "Login")):
+                        raise RuntimeError("Z.AI 已填写密码，但未找到提交按钮")
                     time.sleep(1)
                     continue
 
@@ -341,12 +341,13 @@ class ZAIBrowserRegister:
                         raise RuntimeError("Z.AI 未找到验证码输入框")
                     field.fill(code)
                     otp_used = True
-                    _click_text(page, ("Verify", "Continue", "Next", "Submit"))
+                    if not _click_text(page, ("Verify", "Continue", "Next", "Submit")):
+                        raise RuntimeError("Z.AI 已填写邮箱验证码，但未找到验证按钮")
                     time.sleep(1)
                     continue
 
                 if surface is AuthSurface.SECURITY_CHALLENGE:
-                    self._request_human(page, "security_check", "请在可视浏览器中完成 Z.AI 安全验证，然后返回面板确认继续")
+                    self._request_human(page, "security_check", "出现无法由当前 captcha/SMS provider 自动处理的安全验证")
                     time.sleep(0.5)
                     continue
 
@@ -358,7 +359,7 @@ class ZAIBrowserRegister:
                     unknown_cycles = 0
                     time.sleep(1)
                     continue
-                self._request_human(page, "security_check", "Z.AI 出现未识别的登录步骤，请在可视浏览器中完成该步骤")
+                self._request_human(page, "security_check", "出现未识别的登录/注册步骤")
                 unknown_cycles = 0
 
             raise RuntimeError(f"Z.AI 注册在 {self.timeout} 秒内未完成")
