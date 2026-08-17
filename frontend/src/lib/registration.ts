@@ -54,13 +54,24 @@ export function buildRegistrationOptions(platformMeta: any) {
     })
   }
 
+  if (supportedModes.includes('phone')) {
+    const phoneLabel = identityModeOptions.find(item => item.value === 'phone')?.label || '手机号'
+    options.push({
+      key: 'phone',
+      label: phoneLabel,
+      description: '使用已配置的接码服务自动获取手机号和短信验证码完成注册',
+      identityProvider: 'phone',
+      oauthProvider: '',
+    })
+  }
+
   if (supportedModes.includes('oauth_browser')) {
     supportedOAuth.forEach((provider: string) => {
       const providerLabel = getOptionLabel(provider, oauthProviderOptions)
       options.push({
         key: `oauth:${provider}`,
         label: providerLabel,
-        description: `使用 ${providerLabel} 账号自动创建平台账号`,
+        description: `复用已登录的 ${providerLabel} 浏览器会话自动创建平台账号`,
         identityProvider: 'oauth_browser',
         oauthProvider: provider,
       })
@@ -89,15 +100,21 @@ export function buildExecutorOptions(
       option.description = '不打开浏览器，直接通过协议流程自动注册'
       if (identityProvider !== 'mailbox') {
         option.disabled = true
-        option.reason = '第三方账号注册必须通过浏览器自动化完成'
+        option.reason = identityProvider === 'phone'
+          ? '手机号注册必须通过浏览器自动化完成'
+          : '第三方账号注册必须通过浏览器自动化完成'
       }
       return option
     }
 
     if (executor === 'headless') {
-      option.description = identityProvider === 'mailbox'
-        ? '浏览器在后台自动执行，界面不可见'
-        : '复用本机浏览器登录态，在后台自动完成第三方登录'
+      if (identityProvider === 'mailbox') {
+        option.description = '浏览器在后台自动执行，界面不可见'
+      } else if (identityProvider === 'phone') {
+        option.description = '浏览器在后台自动执行手机号与短信验证码流程'
+      } else {
+        option.description = '复用本机浏览器登录态，在后台自动完成第三方登录'
+      }
       if (identityProvider === 'oauth_browser' && !reusableBrowser) {
         option.disabled = true
         option.reason = '需要先在全局配置里填写 Chrome Profile 路径或 Chrome CDP 地址'
@@ -105,7 +122,13 @@ export function buildExecutorOptions(
       return option
     }
 
-    option.description = '会打开浏览器窗口，但系统仍自动执行，无需额外交互'
+    if (identityProvider === 'oauth_browser') {
+      option.description = reusableBrowser
+        ? '复用已登录的 Chrome 会话自动完成第三方登录'
+        : '无人值守 OAuth 需要预先配置已登录的 Chrome Profile 或 Chrome CDP'
+    } else {
+      option.description = '会打开浏览器窗口，但系统仍自动执行，无需额外交互'
+    }
     return option
   })
 }
