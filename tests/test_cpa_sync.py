@@ -81,6 +81,21 @@ def test_zai_cpa_sync_is_best_effort_when_provider_route_is_not_supported():
     assert http.calls[0][0] == "http://127.0.0.1:8317/v0/management/zai-auth-url"
 
 
+def test_unrelated_platform_preserves_previous_no_cpa_behavior():
+    from core.cpa_sync import sync_account_to_cpa
+
+    http = FakeHttp([])
+    result = sync_account_to_cpa(
+        Account(platform="cursor", email="cursor@example.com"),
+        api_url="http://127.0.0.1:8317",
+        api_key="secret",
+        http_client=http,
+    )
+
+    assert result.attempted is False
+    assert http.calls == []
+
+
 def test_chatgpt_cpa_sync_preserves_existing_auth_file_upload(monkeypatch):
     from core.cpa_sync import sync_account_to_cpa
     from platforms.chatgpt import cpa_upload
