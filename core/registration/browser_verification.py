@@ -30,13 +30,9 @@ def _click_first(page, labels: tuple[str, ...]) -> bool:
 
 def _turnstile_sitekey(page) -> str:
     try:
-        # Managed/invisible Turnstile widgets can be present in the DOM without a
-        # visible box. Presence of the standard data-sitekey attribute is enough.
         widget = page.locator("[data-sitekey]").first
         return str(widget.get_attribute("data-sitekey", timeout=250) or "").strip()
     except TypeError:
-        # Test doubles and older Playwright-compatible wrappers may not accept a
-        # timeout keyword on get_attribute().
         try:
             widget = page.locator("[data-sitekey]").first
             return str(widget.get_attribute("data-sitekey") or "").strip()
@@ -78,12 +74,7 @@ def _inject_turnstile_response(page, token: str) -> bool:
 
 
 class BrowserVerificationSupport:
-    """Bridge platform-owned browser verification to configured providers.
-
-    Automatic providers can be scoped to the platform's own domains so an OAuth
-    provider's Google/GitHub security page is never treated as a rented-phone or
-    platform captcha step. Unknown/third-party security stays HumanChallenge.
-    """
+    """Bridge platform-owned browser verification to configured providers."""
 
     def __init__(
         self,
@@ -103,12 +94,17 @@ class BrowserVerificationSupport:
         self.log = log_fn or (lambda message: None)
         self._captcha_attempts: set[str] = set()
         self._phone_started = False
+        self._phone_number = ""
         self._phone_code_filled = False
         self._phone_reported = False
 
     @property
     def phone_started(self) -> bool:
         return self._phone_started
+
+    @property
+    def phone_number(self) -> str:
+        return self._phone_number
 
     def _is_allowed_page(self, page) -> bool:
         if not self.allowed_domain_substrings:
@@ -131,21 +127,21 @@ class BrowserVerificationSupport:
             return False
         self._captcha_attempts.add(attempt_key)
         if not self.captcha_solver:
-            self.log("[验证] 检测到 Turnstile，但当前没有可用 captcha provider，转人工验证")
+            self.log("[验证] 检测到 Turnstile，但当前没有可用 captcha provider")
             return False
         try:
             self.log("[验证] 检测到 Turnstile，使用框架 captcha provider")
             token = str(self.captcha_solver.solve_turnstile(str(getattr(page, "url", "") or ""), site_key) or "").strip()
             if not token:
-                self.log("[验证] captcha provider 未返回有效 token，转人工验证")
+                self.log("[验证] captcha provider 未返回有效 token")
                 return False
             if not _inject_turnstile_response(page, token):
-                self.log("[验证] Turnstile token 已获取但页面未找到标准响应字段，转人工验证")
+                self.log("[验证] Turnstile token 已获取但页面未找到标准响应字段")
                 return False
             self.log("[验证] Turnstile token 已注入页面")
             return True
         except Exception as exc:
-            self.log(f"[验证] captcha provider 处理失败: {exc}，转人工验证")
+            self.log(f"[验证] captcha provider 处理失败: {exc}")
             return False
 
     def try_phone(self, page) -> bool:
@@ -160,6 +156,7 @@ class BrowserVerificationSupport:
                     'input[name*="phone" i]',
                     'input[autocomplete="tel"]',
                     'input[placeholder*="phone" i]',
+                    'input[placeholder*="mobile" i]',
                     'input[placeholder*="手机号"]',
                 ),
             )
@@ -169,7 +166,22 @@ class BrowserVerificationSupport:
             if not number:
                 raise RuntimeError("接码 provider 未返回手机号")
             phone_field.fill(number)
-            clicked = _click_first(page, ("Continue", "Next", "Send Code", "Send code", "Verify"))
+            self._phone_number = number
+            clicked = _click_first(
+                page,
+                (
+                    "Send Code",
+                    "Send code",
+                    "Send",
+                    "Get Code",
+                    "Continue",
+                    "Next",
+                    "Verify",
+                    "发送验证码",
+                    "获取验证码",
+                    "发送",
+                ),
+            )
             hook = getattr(self.phone_callback, "mark_send_succeeded", None)
             if clicked and callable(hook):
                 hook()
@@ -186,6 +198,7 @@ class BrowserVerificationSupport:
                 'input[name*="otp" i]',
                 'input[name*="code" i]',
                 'input[placeholder*="code" i]',
+                'input[placeholder*="verification" i]',
                 'input[placeholder*="验证码"]',
             ),
         )
@@ -195,7 +208,7 @@ class BrowserVerificationSupport:
         if not code:
             raise RuntimeError("接码 provider 未返回短信验证码")
         code_field.fill(code)
-        _click_first(page, ("Verify", "Continue", "Next", "Submit"))
+        _click_first(page, ("Log In", "Login", "Verify", "Continue", "Next", "Submit", "登录"))
         self._phone_code_filled = True
         self.log("[接码] 已由框架接码 provider 填入短信验证码")
         return True
