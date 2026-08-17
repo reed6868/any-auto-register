@@ -3,7 +3,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from core.base_platform import Account
-from core.registration import ChallengeResponse
 
 
 class FakeResponse:
@@ -27,31 +26,31 @@ class FakeHttp:
 
 
 def _account(platform: str, email: str) -> Account:
-    return Account(platform=platform, email=email, password="")
+    return Account(platform=platform, email=email, password="", extra={"cookies": "session=1"})
 
 
-def test_kimi_cpa_sync_uses_native_oauth_and_waits_for_success():
+def test_kimi_cpa_sync_uses_native_device_flow_without_human_wait():
     from core.cpa_sync import sync_account_to_cpa
 
     http = FakeHttp(
         [
-            FakeResponse(payload={"url": "https://auth.example/kimi", "state": "state-1"}),
+            FakeResponse(payload={"url": "https://auth.kimi.com/device?code=abc", "state": "state-1", "flow": "device"}),
             FakeResponse(payload={"status": "wait"}),
             FakeResponse(payload={"status": "ok"}),
         ]
     )
-    challenges = []
+    authorizations = []
 
-    def challenge_callback(request):
-        challenges.append(request)
-        return ChallengeResponse(completed=True)
+    def authorize(account, url, **kwargs):
+        authorizations.append((account.platform, url, kwargs))
+        return True, "authorized"
 
     result = sync_account_to_cpa(
         _account("kimi", "kimi@example.com"),
         api_url="http://127.0.0.1:8317",
         api_key="secret",
         http_client=http,
-        challenge_callback=challenge_callback,
+        device_authorizer=authorize,
         poll_interval=0,
         poll_timeout=2,
     )
@@ -63,8 +62,28 @@ def test_kimi_cpa_sync_uses_native_oauth_and_waits_for_success():
     assert http.calls[0][1]["headers"]["Authorization"] == "Bearer secret"
     assert http.calls[1][0] == "http://127.0.0.1:8317/v0/management/get-auth-status"
     assert http.calls[1][1]["params"] == {"state": "state-1"}
-    assert challenges[0].kind == "cpa_oauth"
-    assert challenges[0].url == "https://auth.example/kimi"
+    assert authorizations[0][0] == "kimi"
+    assert authorizations[0][1].startswith("https://auth.kimi.com/")
+
+
+def test_kimi_cpa_sync_fails_fast_when_device_grant_cannot_be_auto_authorized():
+    from core.cpa_sync import sync_account_to_cpa
+
+    http = FakeHttp([FakeResponse(payload={"url": "https://auth.kimi.com/device?code=abc", "state": "state-1"})])
+    result = sync_account_to_cpa(
+        _account("kimi", "kimi@example.com"),
+        api_url="http://127.0.0.1:8317",
+        api_key="secret",
+        http_client=http,
+        device_authorizer=lambda account, url, **kwargs: (False, "需要重新登录"),
+        poll_interval=0,
+        poll_timeout=2,
+    )
+
+    assert result.attempted is True
+    assert result.ok is False
+    assert "重新登录" in result.message
+    assert len(http.calls) == 1
 
 
 def test_zai_cpa_sync_is_best_effort_when_provider_route_is_not_supported():
@@ -83,6 +102,24 @@ def test_zai_cpa_sync_is_best_effort_when_provider_route_is_not_supported():
     assert result.ok is False
     assert "不支持" in result.message
     assert http.calls[0][0] == "http://127.0.0.1:8317/v0/management/zai-auth-url"
+
+
+def test_zai_cpa_plugin_route_requires_noninteractive_authorizer():
+    from core.cpa_sync import sync_account_to_cpa
+
+    http = FakeHttp([FakeResponse(payload={"url": "https://plugin.example/authorize", "state": "state-z"})])
+    result = sync_account_to_cpa(
+        _account("zai", "zai@example.com"),
+        api_url="http://127.0.0.1:8317",
+        api_key="secret",
+        http_client=http,
+    )
+
+    assert result.attempted is True
+    assert result.supported is True
+    assert result.ok is False
+    assert "无人值守" in result.message
+    assert len(http.calls) == 1
 
 
 def test_unrelated_platform_preserves_previous_no_cpa_behavior():

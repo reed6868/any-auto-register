@@ -30,6 +30,9 @@ class _LazyCaptchaSolver:
     def solve_turnstile(self, page_url: str, site_key: str) -> str:
         return self._resolve().solve_turnstile(page_url, site_key)
 
+    def solve_geetest(self, page_url: str, params: dict, *, proxy: str = "") -> dict:
+        return self._resolve().solve_geetest(page_url, params, proxy=proxy)
+
 
 def _build_browser_artifacts(
     ctx: RegistrationContext,
@@ -40,9 +43,6 @@ def _build_browser_artifacts(
 ) -> RegistrationArtifacts:
     artifacts = RegistrationArtifacts(challenge_callback=ctx.challenge_callback)
     if use_captcha:
-        # Browser tasks must not fail at startup just because no captcha provider is
-        # configured. The provider is resolved lazily when a supported captcha is
-        # actually detected; the platform can still fall back to HumanChallenge.
         artifacts.captcha_solver = _LazyCaptchaSolver(ctx.platform)
 
     if include_mailbox_callbacks and adapter.otp_spec:
@@ -64,8 +64,6 @@ def _build_browser_artifacts(
             preview_chars=adapter.link_spec.preview_chars,
         )
 
-    # Phone providers are lazy: creating this callback does not rent a phone.
-    # It only acquires a number when a browser worker encounters a phone step.
     artifacts.phone_callback, artifacts.phone_cleanup = build_phone_callbacks(
         ctx,
         service=ctx.platform_name,
@@ -83,10 +81,7 @@ class BrowserRegistrationFlow:
 
         if getattr(ctx.identity, "identity_provider", "") == "oauth_browser":
             capability = self.adapter.capability
-            ensure_oauth_executor_allowed(
-                ctx,
-                capability.oauth_allowed_executor_types,
-            )
+            ensure_oauth_executor_allowed(ctx, capability.oauth_allowed_executor_types)
             if capability.oauth_headless_requires_browser_reuse and ctx.executor_type == "headless":
                 ensure_oauth_browser_reuse(
                     ctx,
@@ -107,8 +102,6 @@ class BrowserRegistrationFlow:
                     if artifacts.phone_cleanup:
                         artifacts.phone_cleanup()
             if self.adapter.oauth_runner:
-                # Backward-compatible path for existing platform adapters that do
-                # not need framework browser artifacts.
                 raw = self.adapter.oauth_runner(ctx)
                 return self.adapter.result_mapper(ctx, raw)
 
@@ -121,10 +114,7 @@ class BrowserRegistrationFlow:
             ctx,
             self.adapter,
             include_mailbox_callbacks=True,
-            use_captcha=(
-                self.adapter.use_captcha_for_mailbox
-                and getattr(ctx.identity, "identity_provider", "") == "mailbox"
-            ),
+            use_captcha=self.adapter.use_captcha_for_mailbox,
         )
 
         try:
@@ -189,10 +179,7 @@ class ProtocolOAuthFlow:
     def run(self, ctx: RegistrationContext) -> RegistrationResult:
         if self.adapter.preflight:
             self.adapter.preflight(ctx)
-        ensure_oauth_executor_allowed(
-            ctx,
-            self.adapter.capability.oauth_allowed_executor_types,
-        )
+        ensure_oauth_executor_allowed(ctx, self.adapter.capability.oauth_allowed_executor_types)
         if self.adapter.capability.oauth_headless_requires_browser_reuse and ctx.executor_type == "headless":
             ensure_oauth_browser_reuse(
                 ctx,

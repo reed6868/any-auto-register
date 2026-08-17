@@ -6,11 +6,17 @@ from core.registration import BrowserRegistrationAdapter, OtpSpec, RegistrationC
 from core.registry import register
 
 
+def _enabled(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on", "是"}
+
+
 @register
 class ZAIPlatform(BasePlatform):
     name = "zai"
     display_name = "Z.AI"
-    version = "1.0.0"
+    version = "1.1.0"
     supported_executors = ["headed"]
     supported_identity_modes = ["mailbox", "oauth_browser"]
     supported_oauth_providers = ["google", "github"]
@@ -32,7 +38,9 @@ class ZAIPlatform(BasePlatform):
     def register(self, email: str = None, password: str = None) -> Account:
         if self._requested_executor_type not in self.supported_executors:
             raise NotImplementedError("Z.AI 注册仅支持 headed 浏览器执行器")
-        return super().register(email=email, password=password)
+        account = super().register(email=email, password=password)
+        setattr(account, "_registration_proxy", str(self.config.proxy or ""))
+        return account
 
     def _prepare_registration_password(self, password: str | None) -> str | None:
         if self._get_identity_provider_name() == "oauth_browser":
@@ -57,14 +65,20 @@ class ZAIPlatform(BasePlatform):
             },
         )
 
-    def _run_oauth(self, ctx, artifacts) -> dict:
-        from platforms.zai.browser_register import register_with_oauth
+    def _challenge_callback(self, ctx, artifacts):
+        if _enabled(ctx.extra.get("allow_human_challenge")):
+            return artifacts.challenge_callback
+        return None
 
+    def _run_oauth(self, ctx, artifacts) -> dict:
+        if not (str(ctx.identity.chrome_user_data_dir or "").strip() or str(ctx.identity.chrome_cdp_url or "").strip()):
+            raise RuntimeError("Z.AI 无人值守 OAuth 需要配置已登录的 Chrome Profile 或 Chrome CDP 以复用第三方会话")
+        from platforms.zai.browser_register import register_with_oauth
         return register_with_oauth(
             proxy=ctx.proxy,
             oauth_provider=ctx.identity.oauth_provider,
             email_hint=ctx.identity.email,
-            challenge_callback=artifacts.challenge_callback,
+            challenge_callback=self._challenge_callback(ctx, artifacts),
             captcha_solver=artifacts.captcha_solver,
             phone_callback=artifacts.phone_callback,
             chrome_user_data_dir=ctx.identity.chrome_user_data_dir,
@@ -76,11 +90,10 @@ class ZAIPlatform(BasePlatform):
     def build_browser_registration_adapter(self):
         def _build_worker(ctx, artifacts):
             from platforms.zai.browser_register import ZAIBrowserRegister
-
             return ZAIBrowserRegister(
                 proxy=ctx.proxy,
                 otp_callback=artifacts.otp_callback,
-                challenge_callback=artifacts.challenge_callback,
+                challenge_callback=self._challenge_callback(ctx, artifacts),
                 captcha_solver=artifacts.captcha_solver,
                 phone_callback=artifacts.phone_callback,
                 timeout=int(ctx.extra.get("browser_register_timeout") or 300),
@@ -97,9 +110,7 @@ class ZAIPlatform(BasePlatform):
             oauth_runner_with_artifacts=self._run_oauth,
             use_captcha_for_mailbox=True,
             use_captcha_for_oauth=True,
-            capability=RegistrationCapability(
-                oauth_allowed_executor_types=("headed",),
-            ),
+            capability=RegistrationCapability(oauth_allowed_executor_types=("headed",)),
             otp_spec=OtpSpec(wait_message="等待 Z.AI 邮箱验证码..."),
         )
 

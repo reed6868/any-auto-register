@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 
 class FakeLocator:
     def __init__(self, *, visible=False, attrs=None):
         self.visible = visible
         self.attrs = dict(attrs or {})
         self.filled = ""
+        self.pressed = []
 
     @property
     def first(self):
@@ -14,17 +17,29 @@ class FakeLocator:
     def is_visible(self, timeout=0):
         return self.visible
 
-    def get_attribute(self, key):
+    def get_attribute(self, key, timeout=0):
+        if key == "value" and self.filled:
+            return self.filled
         return self.attrs.get(key)
+
+    def input_value(self, timeout=0):
+        return self.filled or str(self.attrs.get("value") or "")
 
     def fill(self, value):
         self.filled = value
+
+    def press(self, key):
+        self.pressed.append(key)
+
+    def click(self):
+        return None
 
 
 class FakePage:
     def __init__(self):
         self.url = "https://example.test/auth"
         self.turnstile = FakeLocator(visible=True, attrs={"data-sitekey": "site-key"})
+        self.dial = FakeLocator(visible=False, attrs={"value": "+86"})
         self.phone = FakeLocator(visible=False)
         self.code = FakeLocator(visible=False)
         self.injected_token = ""
@@ -33,9 +48,11 @@ class FakePage:
     def locator(self, selector):
         if selector == "[data-sitekey]":
             return self.turnstile
-        if "tel" in selector:
+        if selector.startswith('input[value^="+"]') or "country" in selector or "dial" in selector:
+            return self.dial
+        if "tel" in selector or "phone" in selector or "mobile" in selector or "手机号" in selector:
             return self.phone
-        if "one-time-code" in selector or "code" in selector or "otp" in selector:
+        if "one-time-code" in selector or "code" in selector or "otp" in selector or "verification" in selector or "验证码" in selector:
             return self.code
         return FakeLocator(visible=False)
 
@@ -57,6 +74,9 @@ class FakePage:
 
         return ClickLocator()
 
+    def get_by_text(self, text, exact=False):
+        return FakeLocator(visible=False)
+
 
 class FakeCaptcha:
     def __init__(self):
@@ -68,13 +88,18 @@ class FakeCaptcha:
 
 
 class FakePhoneCallback:
-    def __init__(self):
-        self.values = iter(["18885551234", "654321"])
+    def __init__(self, number="18885551234", country=""):
+        self.values = iter([number, "654321"])
         self.success = 0
         self.send_succeeded = 0
+        self.activation = None
+        self.country = country
 
     def __call__(self):
-        return next(self.values)
+        value = next(self.values)
+        if self.activation is None:
+            self.activation = SimpleNamespace(country=self.country, metadata={}, phone_number=value)
+        return value
 
     def mark_send_succeeded(self):
         self.send_succeeded += 1
@@ -93,7 +118,6 @@ def test_turnstile_uses_framework_solver_and_injects_response():
     assert support.try_turnstile(page) is True
     assert solver.calls == [(page.url, "site-key")]
     assert page.injected_token == "captcha-token"
-    # The same widget must not consume provider quota twice.
     assert support.try_turnstile(page) is False
     assert len(solver.calls) == 1
 
@@ -110,7 +134,7 @@ def test_invisible_standard_turnstile_widget_still_uses_framework_solver():
     assert solver.calls == [(page.url, "site-key")]
 
 
-def test_phone_step_uses_framework_phone_callback_lazily_and_reports_success():
+def test_phone_step_confirms_send_only_after_otp_stage_and_reports_success():
     from core.registration.browser_verification import BrowserVerificationSupport
 
     page = FakePage()
@@ -121,15 +145,47 @@ def test_phone_step_uses_framework_phone_callback_lazily_and_reports_success():
 
     assert support.try_phone(page) is True
     assert page.phone.filled == "18885551234"
-    assert phone.send_succeeded == 1
+    assert support.phone_number == "18885551234"
+    assert phone.send_succeeded == 0
+    assert any("Send" in item for item in page.clicked)
 
+    # Captcha, if any, can now be solved before the SMS provider is told the
+    # target accepted the phone. Seeing the OTP stage confirms progression.
     page.phone.visible = False
     page.code.visible = True
     assert support.try_phone(page) is True
+    assert phone.send_succeeded == 1
     assert page.code.filled == "654321"
 
     support.mark_authenticated()
     assert phone.success == 1
+
+
+def test_phone_step_syncs_separate_country_code_before_send():
+    from core.registration.browser_verification import BrowserVerificationSupport
+
+    page = FakePage()
+    page.turnstile.attrs = {}
+    page.url = "https://www.kimi.com/"
+    page.phone.visible = True
+    page.dial.visible = True
+    phone = FakePhoneCallback(number="+18885551234", country="187")
+    support = BrowserVerificationSupport(
+        phone_callback=phone,
+        allowed_domain_substrings=("kimi.com",),
+        sync_phone_country_code=True,
+    )
+
+    assert support.try_phone(page) is True
+    assert page.dial.filled == "+1"
+    assert page.phone.filled == "8885551234"
+    assert support.phone_number == "+18885551234"
+    assert phone.send_succeeded == 0
+
+    page.phone.visible = False
+    page.code.visible = True
+    assert support.try_phone(page) is True
+    assert phone.send_succeeded == 1
 
 
 def test_scoped_browser_verification_does_not_touch_third_party_oauth_pages():
@@ -144,6 +200,7 @@ def test_scoped_browser_verification_does_not_touch_third_party_oauth_pages():
         captcha_solver=solver,
         phone_callback=phone,
         allowed_domain_substrings=("kimi.com",),
+        sync_phone_country_code=True,
     )
 
     assert support.try_handle(page) is False

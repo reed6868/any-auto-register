@@ -1,0 +1,85 @@
+name: Live E2E - Kimi and Z.AI
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-e2e-kimi-zai-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-unattended-registration:
+    name: Optional live registration compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      ACCOUNT_MANAGER_DATABASE_URL: sqlite:////tmp/any-auto-register-live-e2e.db
+      PYTHONUNBUFFERED: '1'
+      E2E_PROXY: ${{ secrets.E2E_PROXY }}
+      E2E_SMS_PROVIDER: ${{ secrets.E2E_SMS_PROVIDER }}
+      E2E_SMS_API_KEY: ${{ secrets.E2E_SMS_API_KEY }}
+      E2E_KIMI_SMS_SERVICE: ${{ secrets.E2E_KIMI_SMS_SERVICE }}
+      E2E_KIMI_SMS_COUNTRY: ${{ secrets.E2E_KIMI_SMS_COUNTRY }}
+      HEROSMS_API_KEY: ${{ secrets.HEROSMS_API_KEY }}
+      SMSBOWER_API_KEY: ${{ secrets.SMSBOWER_API_KEY }}
+      E2E_TWOCAPTCHA_KEY: ${{ secrets.E2E_TWOCAPTCHA_KEY }}
+      TWOCAPTCHA_KEY: ${{ secrets.TWOCAPTCHA_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Chromium and Xvfb
+        run: |
+          python -m playwright install --with-deps chromium
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+      - name: Preflight live-provider secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${E2E_TWOCAPTCHA_KEY:-}" && -z "${TWOCAPTCHA_KEY:-}" ]]; then
+            echo '::error::Missing E2E_TWOCAPTCHA_KEY (or TWOCAPTCHA_KEY). Live Kimi/Z.AI gate requires unattended GeeTest/Turnstile capability.'
+            exit 1
+          fi
+          if [[ -z "${E2E_SMS_API_KEY:-}" && -z "${HEROSMS_API_KEY:-}" && -z "${SMSBOWER_API_KEY:-}" ]]; then
+            echo '::error::Missing live SMS key. Configure E2E_SMS_PROVIDER + E2E_SMS_API_KEY, HEROSMS_API_KEY, or SMSBOWER_API_KEY.'
+            exit 1
+          fi
+          echo 'Live provider preflight passed (secret values are not printed).'
+
+      - name: Run real unattended registration compatibility check
+        run: xvfb-run -a python scripts/live_e2e.py
+
+      - name: Show sanitized live result
+        if: always()
+        run: |
+          if [[ -f artifacts/live-e2e-result.json ]]; then
+            cat artifacts/live-e2e-result.json
+          else
+            echo '{"ok":false,"error":"live E2E did not produce result artifact"}'
+          fi
+
+      - name: Upload sanitized live result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-e2e-result
+          path: artifacts/live-e2e-result.json
+          if-no-files-found: warn
+          retention-days: 7

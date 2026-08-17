@@ -5,6 +5,66 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 
+_COUNTRY_DIAL_CODES = {
+    "us": "1", "187": "1",
+    "ru": "7", "0": "7",
+    "uk": "44", "gb": "44", "16": "44",
+    "in": "91", "22": "91",
+    "id": "62", "6": "62",
+    "ph": "63", "4": "63",
+    "th": "66", "52": "66",
+    "br": "55", "73": "55",
+}
+
+_GEETEST_INIT_SCRIPT = r"""
+(() => {
+  const state = window.__aarGeetestState = window.__aarGeetestState || {
+    version: 0,
+    config: null,
+    instance: null,
+    successCallbacks: []
+  };
+
+  const install = (name, version) => {
+    let assigned;
+    try {
+      Object.defineProperty(window, name, {
+        configurable: true,
+        enumerable: true,
+        get() { return assigned; },
+        set(fn) {
+          if (typeof fn !== 'function') {
+            assigned = fn;
+            return;
+          }
+          assigned = function(config, callback, ...rest) {
+            state.version = version;
+            state.config = config || {};
+            const wrappedCallback = function(instance) {
+              state.instance = instance || null;
+              if (instance && typeof instance.onSuccess === 'function' && !instance.__aarOnSuccessWrapped) {
+                const originalOnSuccess = instance.onSuccess.bind(instance);
+                instance.onSuccess = function(cb) {
+                  if (typeof cb === 'function') state.successCallbacks.push(cb);
+                  return originalOnSuccess(cb);
+                };
+                instance.__aarOnSuccessWrapped = true;
+              }
+              if (typeof callback === 'function') return callback(instance);
+            };
+            return fn.call(this, config, wrappedCallback, ...rest);
+          };
+        }
+      });
+    } catch (_) {}
+  };
+
+  install('initGeetest4', 4);
+  install('initGeetest', 3);
+})();
+"""
+
+
 def _first_visible(page, selectors: tuple[str, ...]):
     for selector in selectors:
         try:
@@ -19,7 +79,8 @@ def _first_visible(page, selectors: tuple[str, ...]):
 def _click_first(page, labels: tuple[str, ...]) -> bool:
     for label in labels:
         try:
-            locator = page.get_by_role("button", name=re.compile(re.escape(label), re.I)).first
+            pattern = re.compile(rf"^\s*{re.escape(label)}\s*$", re.I)
+            locator = page.get_by_role("button", name=pattern).first
             if locator.is_visible(timeout=250):
                 locator.click()
                 return True
@@ -30,13 +91,9 @@ def _click_first(page, labels: tuple[str, ...]) -> bool:
 
 def _turnstile_sitekey(page) -> str:
     try:
-        # Managed/invisible Turnstile widgets can be present in the DOM without a
-        # visible box. Presence of the standard data-sitekey attribute is enough.
         widget = page.locator("[data-sitekey]").first
         return str(widget.get_attribute("data-sitekey", timeout=250) or "").strip()
     except TypeError:
-        # Test doubles and older Playwright-compatible wrappers may not accept a
-        # timeout keyword on get_attribute().
         try:
             widget = page.locator("[data-sitekey]").first
             return str(widget.get_attribute("data-sitekey") or "").strip()
@@ -77,13 +134,177 @@ def _inject_turnstile_response(page, token: str) -> bool:
         return False
 
 
-class BrowserVerificationSupport:
-    """Bridge platform-owned browser verification to configured providers.
+def _geetest_snapshot(page) -> dict:
+    try:
+        value = page.evaluate(
+            """
+            () => {
+              const state = window.__aarGeetestState;
+              if (!state || !state.config) return {};
+              const config = state.config || {};
+              return {
+                version: Number(state.version || (config.captchaId || config.captcha_id ? 4 : 3)),
+                captcha_id: String(config.captchaId || config.captcha_id || ''),
+                gt: String(config.gt || ''),
+                challenge: String(config.challenge || ''),
+                api_server: String(config.apiServer || config.api_server || ''),
+                ready: Boolean(state.instance),
+                callback_count: Array.isArray(state.successCallbacks) ? state.successCallbacks.length : 0
+              };
+            }
+            """
+        )
+        return dict(value or {}) if isinstance(value, dict) else {}
+    except Exception:
+        return {}
 
-    Automatic providers can be scoped to the platform's own domains so an OAuth
-    provider's Google/GitHub security page is never treated as a rented-phone or
-    platform captcha step. Unknown/third-party security stays HumanChallenge.
-    """
+
+def _has_geetest_surface(page) -> bool:
+    try:
+        count = page.locator(
+            '[class*="geetest" i], [id*="geetest" i], iframe[src*="geetest" i], script[src*="geetest" i]'
+        ).count()
+        return int(count or 0) > 0
+    except Exception:
+        return False
+
+
+def _inject_geetest_solution(page, solution: dict) -> bool:
+    try:
+        return bool(
+            page.evaluate(
+                """
+                solution => {
+                  const state = window.__aarGeetestState;
+                  if (!state || !state.instance) return false;
+                  const version = Number(solution.version || state.version || 4);
+                  const validate = version === 4 ? {
+                    lot_number: solution.lot_number,
+                    captcha_output: solution.captcha_output,
+                    pass_token: solution.pass_token,
+                    gen_time: solution.gen_time
+                  } : {
+                    geetest_challenge: solution.geetest_challenge,
+                    geetest_validate: solution.geetest_validate,
+                    geetest_seccode: solution.geetest_seccode
+                  };
+
+                  try {
+                    Object.defineProperty(state.instance, 'getValidate', {
+                      configurable: true,
+                      value: () => ({ ...validate })
+                    });
+                  } catch (_) {
+                    try { state.instance.getValidate = () => ({ ...validate }); } catch (_) {}
+                  }
+
+                  const fieldMap = version === 4 ? validate : {
+                    geetest_challenge: validate.geetest_challenge,
+                    geetest_validate: validate.geetest_validate,
+                    geetest_seccode: validate.geetest_seccode
+                  };
+                  let touched = 0;
+                  for (const [name, value] of Object.entries(fieldMap)) {
+                    if (!value) continue;
+                    for (const node of document.querySelectorAll(`[name="${name}"]`)) {
+                      node.value = value;
+                      node.setAttribute('value', value);
+                      node.dispatchEvent(new Event('input', { bubbles: true }));
+                      node.dispatchEvent(new Event('change', { bubbles: true }));
+                      touched += 1;
+                    }
+                  }
+
+                  let called = 0;
+                  for (const cb of (state.successCallbacks || [])) {
+                    try { cb(); called += 1; } catch (_) {}
+                  }
+                  return called > 0 || touched > 0;
+                }
+                """,
+                solution,
+            )
+        )
+    except Exception:
+        return False
+
+
+def _activation_dial_code(phone_callback) -> str:
+    activation = getattr(phone_callback, "activation", None)
+    if activation is None:
+        return ""
+    metadata = getattr(activation, "metadata", None)
+    metadata = metadata if isinstance(metadata, dict) else {}
+    number_info = metadata.get("number_info") if isinstance(metadata.get("number_info"), dict) else {}
+    explicit = str(number_info.get("countryPhoneCode") or metadata.get("country_phone_code") or "").strip().lstrip("+")
+    if explicit.isdigit():
+        return explicit
+    country = str(getattr(activation, "country", "") or "").strip().lower()
+    return _COUNTRY_DIAL_CODES.get(country, "")
+
+
+def _locator_value(locator) -> str:
+    try:
+        return str(locator.input_value(timeout=250) or "").strip()
+    except Exception:
+        try:
+            return str(locator.get_attribute("value") or "").strip()
+        except Exception:
+            return ""
+
+
+def _sync_phone_country_code(page, phone_callback, number: str) -> str:
+    dial_code = _activation_dial_code(phone_callback)
+    if not dial_code:
+        return number
+    target = f"+{dial_code}"
+    dial_field = _first_visible(
+        page,
+        (
+            'input[value^="+"]',
+            'input[placeholder^="+"]',
+            'input[aria-label*="country" i]',
+            'input[aria-label*="dial" i]',
+        ),
+    )
+    if dial_field is None:
+        return number
+
+    current = _locator_value(dial_field)
+    if current != target:
+        changed = False
+        try:
+            dial_field.fill(target)
+            changed = _locator_value(dial_field) in {"", target}
+            try:
+                dial_field.press("Enter")
+            except Exception:
+                pass
+        except Exception:
+            changed = False
+        if not changed:
+            try:
+                dial_field.click()
+                option = page.get_by_text(target, exact=True).first
+                if option.is_visible(timeout=500):
+                    option.click()
+                    changed = True
+            except Exception:
+                changed = False
+        if not changed:
+            raise RuntimeError(f"无法将页面手机号国家区号从 {current or 'unknown'} 切换为 {target}")
+
+    compact = re.sub(r"[\s()-]", "", str(number or ""))
+    prefix = f"+{dial_code}"
+    if compact.startswith(prefix):
+        return compact[len(prefix):] or number
+    if compact.startswith(dial_code):
+        return compact[len(dial_code):] or number
+    return number
+
+
+class BrowserVerificationSupport:
+    """Bridge platform-owned browser verification to configured providers."""
 
     def __init__(
         self,
@@ -91,6 +312,8 @@ class BrowserVerificationSupport:
         captcha_solver: Any = None,
         phone_callback: Callable[[], str] | None = None,
         allowed_domain_substrings: tuple[str, ...] = (),
+        sync_phone_country_code: bool = False,
+        proxy: str | None = None,
         log_fn=None,
     ):
         self.captcha_solver = captcha_solver
@@ -100,15 +323,31 @@ class BrowserVerificationSupport:
             for item in allowed_domain_substrings
             if str(item or "").strip()
         )
+        self.sync_phone_country_code = bool(sync_phone_country_code)
+        self.proxy = str(proxy or "").strip()
         self.log = log_fn or (lambda message: None)
         self._captcha_attempts: set[str] = set()
+        self._geetest_attempts: set[str] = set()
         self._phone_started = False
+        self._phone_number = ""
+        self._phone_send_confirmed = False
         self._phone_code_filled = False
         self._phone_reported = False
+
+    def install(self, browser_context) -> None:
+        """Install standard GeeTest init capture before target page scripts run."""
+        try:
+            browser_context.add_init_script(_GEETEST_INIT_SCRIPT)
+        except Exception as exc:
+            self.log(f"[验证] GeeTest init hook 安装失败: {exc}")
 
     @property
     def phone_started(self) -> bool:
         return self._phone_started
+
+    @property
+    def phone_number(self) -> str:
+        return self._phone_number
 
     def _is_allowed_page(self, page) -> bool:
         if not self.allowed_domain_substrings:
@@ -120,33 +359,77 @@ class BrowserVerificationSupport:
             host = ""
         return bool(host and any(part in host for part in self.allowed_domain_substrings))
 
+    def try_geetest(self, page) -> bool:
+        if not self._is_allowed_page(page):
+            return False
+        params = _geetest_snapshot(page)
+        if not params:
+            if _has_geetest_surface(page):
+                raise RuntimeError("检测到 GeeTest，但未捕获标准 initGeetest/initGeetest4 初始化参数")
+            return False
+        version = int(params.get("version") or 4)
+        identity = str(params.get("captcha_id") or params.get("gt") or "")
+        challenge = str(params.get("challenge") or "")
+        attempt_key = f"geetest:{version}:{identity}:{challenge}"
+        if attempt_key in self._geetest_attempts:
+            return False
+        self._geetest_attempts.add(attempt_key)
+        if not self.captcha_solver:
+            raise RuntimeError("检测到 GeeTest，但当前没有可用 captcha provider")
+        try:
+            self.log(f"[验证] 检测到 GeeTest v{version}，使用框架 captcha provider")
+            solution = self.captcha_solver.solve_geetest(
+                str(getattr(page, "url", "") or ""),
+                params,
+                proxy=self.proxy,
+            )
+        except NotImplementedError as exc:
+            raise RuntimeError(f"当前 captcha provider 不支持 GeeTest: {exc}") from exc
+        except Exception as exc:
+            raise RuntimeError(f"GeeTest captcha provider 处理失败: {exc}") from exc
+        if not isinstance(solution, dict) or not solution:
+            raise RuntimeError("GeeTest captcha provider 未返回有效验证结果")
+        if not _inject_geetest_solution(page, solution):
+            raise RuntimeError("GeeTest 已求解，但未能交回页面原有验证回调")
+        self.log(f"[验证] GeeTest v{version} 验证结果已交回页面")
+        return True
+
     def try_turnstile(self, page) -> bool:
         if not self._is_allowed_page(page):
             return False
         site_key = _turnstile_sitekey(page)
         if not site_key:
             return False
-        attempt_key = f"{str(getattr(page, 'url', '') or '')}|{site_key}"
+        attempt_key = f"turnstile:{str(getattr(page, 'url', '') or '')}:{site_key}"
         if attempt_key in self._captcha_attempts:
             return False
         self._captcha_attempts.add(attempt_key)
         if not self.captcha_solver:
-            self.log("[验证] 检测到 Turnstile，但当前没有可用 captcha provider，转人工验证")
+            self.log("[验证] 检测到 Turnstile，但当前没有可用 captcha provider")
             return False
         try:
             self.log("[验证] 检测到 Turnstile，使用框架 captcha provider")
             token = str(self.captcha_solver.solve_turnstile(str(getattr(page, "url", "") or ""), site_key) or "").strip()
             if not token:
-                self.log("[验证] captcha provider 未返回有效 token，转人工验证")
+                self.log("[验证] captcha provider 未返回有效 token")
                 return False
             if not _inject_turnstile_response(page, token):
-                self.log("[验证] Turnstile token 已获取但页面未找到标准响应字段，转人工验证")
+                self.log("[验证] Turnstile token 已获取但页面未找到标准响应字段")
                 return False
             self.log("[验证] Turnstile token 已注入页面")
             return True
         except Exception as exc:
-            self.log(f"[验证] captcha provider 处理失败: {exc}，转人工验证")
+            self.log(f"[验证] captcha provider 处理失败: {exc}")
             return False
+
+    def _confirm_phone_send(self) -> None:
+        if self._phone_send_confirmed or not self.phone_callback:
+            return
+        hook = getattr(self.phone_callback, "mark_send_succeeded", None)
+        if callable(hook):
+            hook()
+        self._phone_send_confirmed = True
+        self.log("[接码] 已进入短信验证码阶段，确认目标站已接受手机号")
 
     def try_phone(self, page) -> bool:
         if not self._is_allowed_page(page) or not self.phone_callback:
@@ -160,6 +443,7 @@ class BrowserVerificationSupport:
                     'input[name*="phone" i]',
                     'input[autocomplete="tel"]',
                     'input[placeholder*="phone" i]',
+                    'input[placeholder*="mobile" i]',
                     'input[placeholder*="手机号"]',
                 ),
             )
@@ -168,13 +452,19 @@ class BrowserVerificationSupport:
             number = str(self.phone_callback() or "").strip()
             if not number:
                 raise RuntimeError("接码 provider 未返回手机号")
-            phone_field.fill(number)
-            clicked = _click_first(page, ("Continue", "Next", "Send Code", "Send code", "Verify"))
-            hook = getattr(self.phone_callback, "mark_send_succeeded", None)
-            if clicked and callable(hook):
-                hook()
+            field_value = _sync_phone_country_code(page, self.phone_callback, number) if self.sync_phone_country_code else number
+            phone_field.fill(field_value)
+            self._phone_number = number
+            if not _click_first(
+                page,
+                (
+                    "Send Code", "Send code", "Send", "Get Code", "Continue", "Next", "Verify",
+                    "发送验证码", "获取验证码", "发送",
+                ),
+            ):
+                raise RuntimeError("已填写手机号，但未找到发送短信验证码按钮")
             self._phone_started = True
-            self.log(f"[接码] 已由框架接码 provider 填入手机号: {number[:5]}****")
+            self.log(f"[接码] 已由框架接码 provider 填入手机号: {number[:5]}**** 并点击验证码发送")
             return True
 
         if self._phone_code_filled:
@@ -186,23 +476,29 @@ class BrowserVerificationSupport:
                 'input[name*="otp" i]',
                 'input[name*="code" i]',
                 'input[placeholder*="code" i]',
+                'input[placeholder*="verification" i]',
                 'input[placeholder*="验证码"]',
             ),
         )
         if code_field is None:
             return False
+
+        self._confirm_phone_send()
         code = str(self.phone_callback() or "").strip()
         if not code:
             raise RuntimeError("接码 provider 未返回短信验证码")
         code_field.fill(code)
-        _click_first(page, ("Verify", "Continue", "Next", "Submit"))
+        if not _click_first(page, ("Log In", "Login", "Verify", "Continue", "Next", "Submit", "登录")):
+            raise RuntimeError("已填写短信验证码，但未找到提交/登录按钮")
         self._phone_code_filled = True
-        self.log("[接码] 已由框架接码 provider 填入短信验证码")
+        self.log("[接码] 已由框架接码 provider 填入并提交短信验证码")
         return True
 
     def try_handle(self, page) -> bool:
         if not self._is_allowed_page(page):
             return False
+        if self.try_geetest(page):
+            return True
         if self.try_turnstile(page):
             return True
         return self.try_phone(page)
@@ -210,6 +506,7 @@ class BrowserVerificationSupport:
     def mark_authenticated(self) -> None:
         if not self._phone_started or self._phone_reported or not self.phone_callback:
             return
+        self._confirm_phone_send()
         hook = getattr(self.phone_callback, "report_success", None)
         if callable(hook):
             hook()
