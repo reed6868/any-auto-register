@@ -15,8 +15,23 @@ class KimiPlatform(BasePlatform):
     supported_oauth_providers = ["google"]
 
     def __init__(self, config: RegisterConfig = None, mailbox=None):
-        super().__init__(config)
+        requested = config or RegisterConfig()
+        self._requested_executor_type = str(requested.executor_type or "protocol")
+        init_config = requested
+        if self._requested_executor_type not in type(self).supported_executors:
+            init_config = RegisterConfig(
+                executor_type="headed",
+                captcha_solver=requested.captcha_solver,
+                proxy=requested.proxy,
+                extra=dict(requested.extra or {}),
+            )
+        super().__init__(init_config)
         self.mailbox = mailbox
+
+    def register(self, email: str = None, password: str = None) -> Account:
+        if self._requested_executor_type not in self.supported_executors:
+            raise NotImplementedError("Kimi 注册仅支持 headed 浏览器执行器")
+        return super().register(email=email, password=password)
 
     @staticmethod
     def _map_result(ctx, result: dict) -> RegistrationResult:
