@@ -37,7 +37,11 @@ class KimiPlatform(BasePlatform):
     def register(self, email: str = None, password: str = None) -> Account:
         if self._requested_executor_type not in self.supported_executors:
             raise NotImplementedError("Kimi 注册仅支持 headed 浏览器执行器")
-        return super().register(email=email, password=password)
+        account = super().register(email=email, password=password)
+        # Runtime-only context for immediate CPA/device authorization. This is a
+        # dynamic attribute, not part of the persisted Account schema.
+        setattr(account, "_registration_proxy", str(self.config.proxy or ""))
+        return account
 
     def _should_require_identity_email(self) -> bool:
         return self._get_identity_provider_name() not in {"phone", "oauth_browser"}
@@ -75,8 +79,6 @@ class KimiPlatform(BasePlatform):
         )
 
     def _challenge_callback(self, ctx, artifacts):
-        # Full-unattended is the default. HumanChallenge remains available only
-        # when explicitly enabled for diagnostics/E2E debugging.
         if _enabled(ctx.extra.get("allow_human_challenge")):
             return artifacts.challenge_callback
         return None
@@ -86,9 +88,7 @@ class KimiPlatform(BasePlatform):
             raise RuntimeError("Kimi 当前仅支持 Google OAuth")
         if not (str(ctx.identity.chrome_user_data_dir or "").strip() or str(ctx.identity.chrome_cdp_url or "").strip()):
             raise RuntimeError("Kimi 无人值守 Google OAuth 需要配置已登录的 Chrome Profile 或 Chrome CDP 以复用 Google 会话")
-
         from platforms.kimi.browser_auth import register_with_google
-
         return register_with_google(
             proxy=ctx.proxy,
             email_hint=ctx.identity.email,
@@ -107,7 +107,6 @@ class KimiPlatform(BasePlatform):
     def build_browser_registration_adapter(self):
         def _build_worker(ctx, artifacts):
             from platforms.kimi.browser_auth import KimiPhoneRegister
-
             return KimiPhoneRegister(
                 proxy=ctx.proxy,
                 challenge_callback=self._challenge_callback(ctx, artifacts),
