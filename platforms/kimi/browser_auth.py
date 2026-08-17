@@ -146,6 +146,7 @@ def register_with_google(
         captcha_solver=captcha_solver,
         phone_callback=phone_callback,
         allowed_domain_substrings=("kimi.com",),
+        sync_phone_country_code=True,
         log_fn=log_fn,
     )
     with OAuthBrowser(
@@ -234,6 +235,7 @@ class KimiPhoneRegister:
             captcha_solver=captcha_solver,
             phone_callback=phone_callback,
             allowed_domain_substrings=("kimi.com",),
+            sync_phone_country_code=True,
             log_fn=log_fn,
         )
 
@@ -279,7 +281,6 @@ class KimiPhoneRegister:
                         "identity_mode": "phone",
                     }
 
-                # Standard Turnstile + phone + SMS OTP are handled by framework providers.
                 if self.verification.try_handle(page):
                     unknown_cycles = 0
                     time.sleep(0.75)
