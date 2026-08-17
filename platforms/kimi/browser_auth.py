@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 from core.oauth_browser import OAuthBrowser, finalize_oauth_email
 from core.registration import ChallengeRequest, ChallengeResponse
+from core.registration.browser_verification import BrowserVerificationSupport
 
 
 KIMI_URL = "https://www.kimi.com/"
@@ -108,11 +109,22 @@ def _is_authenticated(browser: OAuthBrowser) -> bool:
     return detect_auth_surface(url=str(page.url or ""), text=_page_text(page)) is AuthSurface.AUTHENTICATED
 
 
-def _wait_authenticated(browser: OAuthBrowser, timeout: float) -> bool:
+def _wait_authenticated(
+    browser: OAuthBrowser,
+    timeout: float,
+    verification: BrowserVerificationSupport | None = None,
+) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if _is_authenticated(browser):
+            if verification:
+                verification.mark_authenticated()
             return True
+        if verification:
+            page = browser.active_page()
+            if verification.try_handle(page):
+                time.sleep(0.75)
+                continue
         time.sleep(0.5)
     return False
 
@@ -122,11 +134,18 @@ def register_with_google(
     proxy: str | None,
     email_hint: str,
     challenge_callback,
+    captcha_solver=None,
+    phone_callback=None,
     chrome_user_data_dir: str = "",
     chrome_cdp_url: str = "",
     timeout: int = 300,
     log_fn=print,
 ) -> dict:
+    verification = BrowserVerificationSupport(
+        captcha_solver=captcha_solver,
+        phone_callback=phone_callback,
+        log_fn=log_fn,
+    )
     with OAuthBrowser(
         proxy=proxy,
         headless=False,
@@ -138,6 +157,7 @@ def register_with_google(
         time.sleep(1)
 
         if _is_authenticated(browser):
+            verification.mark_authenticated()
             page = browser.active_page()
             storage = _storage_snapshot(page)
             email = finalize_oauth_email(_extract_email(storage), email_hint, "Kimi")
@@ -157,7 +177,7 @@ def register_with_google(
         if chrome_user_data_dir or chrome_cdp_url:
             browser.auto_select_google_account(timeout=8)
 
-        if not _wait_authenticated(browser, 8):
+        if not _wait_authenticated(browser, 8, verification=verification):
             if not challenge_callback:
                 raise RuntimeError("Kimi Google 登录需要在可视浏览器中完成，但当前任务没有 HumanChallenge 回调")
             response: ChallengeResponse = challenge_callback(
@@ -171,7 +191,7 @@ def register_with_google(
             if not response.completed:
                 raise RuntimeError("Kimi Google 登录人工验证未完成")
 
-        if not _wait_authenticated(browser, max(5, timeout - 8)):
+        if not _wait_authenticated(browser, max(5, timeout - 8), verification=verification):
             raise RuntimeError("Kimi Google 登录完成后未检测到已登录页面")
 
         page = browser.active_page()
