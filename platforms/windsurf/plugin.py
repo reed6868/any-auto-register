@@ -41,11 +41,11 @@ class WindsurfPlatform(BasePlatform):
     supported_identity_modes = ["mailbox"]
     protocol_captcha_order = ("2captcha", "capsolver", "auto")
     capabilities = [
-        "query_state",              # 查询账号状态/额度
-        "check_trial",              # 检查 Pro Trial 资格
-        "generate_link",            # 生成 Pro Trial Stripe 链接（自动打码）
-        "generate_link_browser",    # 生成 Pro Trial Stripe 链接（浏览器）
-        "switch_desktop",           # 切换到桌面应用
+        "query_state",
+        "check_trial",
+        "generate_link",
+        "generate_link_browser",
+        "switch_desktop",
     ]
     capability_overrides = {
         "generate_link": {
@@ -67,10 +67,19 @@ class WindsurfPlatform(BasePlatform):
             "label": "切换桌面应用（纯协议）",
         },
     }
+    legacy_action_aliases = {
+        "generate_trial_link": "generate_link",
+        "payment_link": "generate_link",
+        "payment_link_browser": "generate_link_browser",
+    }
 
     def __init__(self, config: RegisterConfig = None, mailbox: BaseMailbox = None):
         super().__init__(config)
         self.mailbox = mailbox
+
+    def execute_action(self, action_id: str, account: Account, params: dict) -> dict:
+        resolved_action = self.legacy_action_aliases.get(action_id, action_id)
+        return super().execute_action(resolved_action, account, params)
 
     def _map_windsurf_result(self, result: dict) -> RegistrationResult:
         overview = dict(result.get("account_overview") or {})
@@ -324,13 +333,11 @@ class WindsurfPlatform(BasePlatform):
             if "HTTP 401" not in str(exc):
                 raise
             self.log("Windsurf SubscribeToPlan returned 401, attempting session refresh...")
-            # 1) Try auth_token refresh first
             if context.get("auth_token"):
                 try:
                     refreshed_auth = client.post_auth(context["auth_token"])
                 except Exception as re_exc:
                     self.log(f"auth_token refresh failed: {re_exc}")
-            # 2) If auth_token also fails, re-login with password
             if not refreshed_auth.get("session_token") and str(getattr(account, 'password', '') or '').strip():
                 self.log("auth_token refresh failed, attempting password re-login...")
                 try:
@@ -378,7 +385,6 @@ class WindsurfPlatform(BasePlatform):
             },
         }
 
-    
     def get_quota(self, account: Account) -> dict:
         state = self._load_state(account)
         return dict((state.get("summary") or {}).get("account_overview") or {})
