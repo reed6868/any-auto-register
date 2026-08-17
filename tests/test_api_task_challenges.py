@@ -2,12 +2,29 @@ from __future__ import annotations
 
 import threading
 import time
+import uuid
 
-from application.tasks import TASK_STATUS_RUNNING, create_task, get_task
+from application.tasks import TASK_STATUS_RUNNING, get_task
 from core.db import TaskModel, engine
 from core.registration import ChallengeRequest, ChallengeResponse
 from core.task_challenges import request_human_challenge
 from sqlmodel import Session
+
+
+def _create_running_task(platform: str) -> str:
+    task_id = uuid.uuid4().hex
+    with Session(engine) as session:
+        model = TaskModel(
+            id=task_id,
+            type="register",
+            platform=platform,
+            status=TASK_STATUS_RUNNING,
+            payload_json="{}",
+            progress_total=1,
+        )
+        session.add(model)
+        session.commit()
+    return task_id
 
 
 def _wait_for_challenge(task_id: str, timeout: float = 2.0) -> dict:
@@ -22,20 +39,7 @@ def _wait_for_challenge(task_id: str, timeout: float = 2.0) -> dict:
 
 
 def test_api_can_resolve_active_human_challenge(client):
-    task = create_task(
-        task_type="register",
-        platform="kimi",
-        payload={"platform": "kimi"},
-        progress_total=1,
-    )
-    task_id = task["task_id"]
-    with Session(engine) as session:
-        model = session.get(TaskModel, task_id)
-        assert model is not None
-        model.status = TASK_STATUS_RUNNING
-        session.add(model)
-        session.commit()
-
+    task_id = _create_running_task("kimi")
     holder: dict[str, ChallengeResponse] = {}
 
     def wait_for_user() -> None:
@@ -71,14 +75,9 @@ def test_api_rejects_missing_or_stale_human_challenge(client):
     )
     assert missing.status_code == 404
 
-    task = create_task(
-        task_type="register",
-        platform="zai",
-        payload={"platform": "zai"},
-        progress_total=1,
-    )
+    task_id = _create_running_task("zai")
     stale = client.post(
-        f"/api/tasks/{task['task_id']}/challenge",
+        f"/api/tasks/{task_id}/challenge",
         json={"completed": True, "challenge_id": "stale"},
     )
     assert stale.status_code == 409
