@@ -42,6 +42,15 @@ class TasksQueryService:
 
     @staticmethod
     def _serialize(item) -> dict:
+        from core.task_challenges import get_task_challenge
+
+        result = dict(item.result or {})
+        challenge = get_task_challenge(item.id)
+        if challenge:
+            result["challenge"] = challenge
+        else:
+            result.pop("challenge", None)
+
         return {
             "id": item.id,
             "task_id": item.id,
@@ -63,5 +72,5 @@ class TasksQueryService:
             "started_at": serialize_datetime(item.started_at),
             "finished_at": serialize_datetime(item.finished_at),
             "updated_at": serialize_datetime(item.updated_at),
-            "result": item.result,
+            "result": result,
         }
