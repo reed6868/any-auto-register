@@ -15,7 +15,6 @@ jobs:
     name: Optional live registration compatibility
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    continue-on-error: true
     env:
       ACCOUNT_MANAGER_DATABASE_URL: sqlite:////tmp/any-auto-register-live-e2e.db
       PYTHONUNBUFFERED: '1'
