@@ -9,6 +9,9 @@ IDENTITY_PROVIDER_ALIASES = {
     "email": "mailbox",
     "mail": "mailbox",
     "mailbox": "mailbox",
+    "phone": "phone",
+    "mobile": "phone",
+    "sms": "phone",
     "oauth": "oauth_browser",
     "oauth_browser": "oauth_browser",
     "oauth_manual": "oauth_browser",   # backward-compat
@@ -97,6 +100,24 @@ class MailboxIdentityProvider(BaseIdentityProvider):
         )
 
 
+class PhoneIdentityProvider(BaseIdentityProvider):
+    """Provider-backed mobile identity.
+
+    The actual number is intentionally acquired lazily by the browser flow via
+    the existing SMS provider callback. Resolving the identity must not rent a
+    number before the target site reaches its phone step.
+    """
+
+    identity_provider = "phone"
+
+    def resolve(self, requested_email: Optional[str] = None) -> IdentityMaterial:
+        return IdentityMaterial(
+            identity_provider=self.identity_provider,
+            email="",
+            metadata={"phone_provider": self.extra.get("phone_provider") or self.extra.get("sms_provider") or ""},
+        )
+
+
 class BrowserOAuthIdentityProvider(BaseIdentityProvider):
     identity_provider = "oauth_browser"
 
@@ -125,6 +146,8 @@ def create_identity_provider(mode: Optional[str], *, mailbox=None, extra: dict =
     normalized = normalize_identity_provider(mode)
     if normalized == "mailbox":
         return MailboxIdentityProvider(mailbox=mailbox, extra=extra)
+    if normalized == "phone":
+        return PhoneIdentityProvider(mailbox=mailbox, extra=extra)
     if normalized == "oauth_browser":
         return BrowserOAuthIdentityProvider(mailbox=mailbox, extra=extra)
     raise ValueError(f"未知 identity_provider: {mode}")
