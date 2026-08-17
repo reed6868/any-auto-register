@@ -29,11 +29,11 @@ def _mark_running(task_id: str) -> None:
         session.commit()
 
 
-def _context(extra: dict | None = None) -> RegistrationContext:
+def _context(extra: dict | None = None, platform=None) -> RegistrationContext:
     return RegistrationContext(
         platform_name="zai",
         platform_display_name="Z.AI",
-        platform=SimpleNamespace(),
+        platform=platform or SimpleNamespace(),
         identity=SimpleNamespace(),
         config=SimpleNamespace(executor_type="headed", proxy=None, extra=extra or {}),
         email=None,
@@ -42,17 +42,14 @@ def _context(extra: dict | None = None) -> RegistrationContext:
     )
 
 
-def test_registration_context_only_builds_challenge_callback_for_trusted_worker_task():
-    from core.task_context import clear_current_task_id, set_current_task_id
+def test_registration_context_only_builds_challenge_callback_from_bound_task_logger():
+    from application.tasks import TaskLogger
 
-    clear_current_task_id()
     assert _context({"_task_id": "attacker-controlled"}).challenge_callback is None
 
-    set_current_task_id("trusted-task")
-    try:
-        assert callable(_context().challenge_callback)
-    finally:
-        clear_current_task_id()
+    task_logger = TaskLogger("trusted-task")
+    platform = SimpleNamespace(_log_fn=task_logger.log)
+    assert callable(_context(platform=platform).challenge_callback)
 
 
 def test_task_human_challenge_waits_for_user_and_clears_result():
