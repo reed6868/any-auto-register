@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 from core.oauth_browser import OAuthBrowser, finalize_oauth_email
 from core.registration import ChallengeRequest, ChallengeResponse
+from core.registration.browser_verification import BrowserVerificationSupport
 
 
 AUTH_URL = "https://chat.z.ai/auth?redirect=%2F"
@@ -141,13 +142,22 @@ def _capture_session(browser: OAuthBrowser, *, email_hint: str, password: str = 
     }
 
 
-def _wait_authenticated(browser: OAuthBrowser, timeout: float) -> bool:
+def _wait_authenticated(
+    browser: OAuthBrowser,
+    timeout: float,
+    verification: BrowserVerificationSupport | None = None,
+) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         page = browser.active_page()
         url, text, input_types = _snapshot(page)
         if detect_auth_surface(url=url, text=text, input_types=input_types) is AuthSurface.AUTHENTICATED:
+            if verification:
+                verification.mark_authenticated()
             return True
+        if verification and verification.try_handle(page):
+            time.sleep(0.75)
+            continue
         time.sleep(0.5)
     return False
 
@@ -158,11 +168,18 @@ def register_with_oauth(
     oauth_provider: str,
     email_hint: str,
     challenge_callback: Callable[[ChallengeRequest], ChallengeResponse] | None,
+    captcha_solver=None,
+    phone_callback=None,
     chrome_user_data_dir: str = "",
     chrome_cdp_url: str = "",
     timeout: int = 300,
     log_fn=print,
 ) -> dict:
+    verification = BrowserVerificationSupport(
+        captcha_solver=captcha_solver,
+        phone_callback=phone_callback,
+        log_fn=log_fn,
+    )
     with OAuthBrowser(
         proxy=proxy,
         headless=False,
@@ -178,7 +195,7 @@ def register_with_oauth(
         if oauth_provider == "google" and (chrome_user_data_dir or chrome_cdp_url):
             browser.auto_select_google_account(timeout=8)
 
-        if not _wait_authenticated(browser, 8):
+        if not _wait_authenticated(browser, 8, verification=verification):
             if not challenge_callback:
                 raise RuntimeError("Z.AI OAuth 需要在可视浏览器中完成登录，但当前任务没有 HumanChallenge 回调")
             response = challenge_callback(
@@ -192,7 +209,7 @@ def register_with_oauth(
             if not response.completed:
                 raise RuntimeError("Z.AI OAuth 人工验证未完成")
 
-        if not _wait_authenticated(browser, max(5, timeout - 8)):
+        if not _wait_authenticated(browser, max(5, timeout - 8), verification=verification):
             raise RuntimeError("Z.AI OAuth 登录完成后未检测到已登录页面")
         return _capture_session(browser, email_hint=email_hint)
 
@@ -204,6 +221,8 @@ class ZAIBrowserRegister:
         proxy: str | None = None,
         otp_callback: Callable[[], str] | None = None,
         challenge_callback: Callable[[ChallengeRequest], ChallengeResponse] | None = None,
+        captcha_solver=None,
+        phone_callback=None,
         log_fn=print,
         timeout: int = 300,
     ):
@@ -212,6 +231,14 @@ class ZAIBrowserRegister:
         self.challenge_callback = challenge_callback
         self.log = log_fn
         self.timeout = timeout
+        self.verification = BrowserVerificationSupport(
+            captcha_solver=captcha_solver,
+            phone_callback=phone_callback,
+            log_fn=log_fn,
+        )
+        # Expose these for deterministic adapter tests and post-init integrations.
+        self.captcha_solver = captcha_solver
+        self.phone_callback = phone_callback
 
     def _request_human(self, page, kind: str, message: str) -> None:
         if not self.challenge_callback:
@@ -246,7 +273,14 @@ class ZAIBrowserRegister:
                 surface = detect_auth_surface(url=url, text=text, input_types=input_types)
 
                 if surface is AuthSurface.AUTHENTICATED:
+                    self.verification.mark_authenticated()
                     return _capture_session(browser, email_hint=email, password=password)
+
+                # Phone and standard Turnstile steps are delegated to the framework
+                # providers before falling back to the platform-specific state machine.
+                if self.verification.try_handle(page):
+                    time.sleep(1)
+                    continue
 
                 if surface is AuthSurface.LANDING:
                     if not _click_text(page, ("Continue with Email",)):
