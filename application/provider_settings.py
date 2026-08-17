@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from infrastructure.provider_definitions_repository import ProviderDefinitionsRepository
-from infrastructure.provider_settings_repository import ProviderSettingsRepository
+from infrastructure.provider_settings_repository import ProviderSettingsRepository, runtime_provider_key
 
 
 class ProviderSettingsService:
@@ -59,7 +59,7 @@ class ProviderSettingsService:
         return {
             "id": int(item.id or 0),
             "provider_type": item.provider_type,
-            "provider_key": item.provider_key,
+            "provider_key": runtime_provider_key(item.provider_type, item.provider_key),
             "display_name": item.display_name,
             "catalog_label": definition.label if definition else item.provider_key,
             "description": definition.description if definition else "",
