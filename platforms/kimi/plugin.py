@@ -51,7 +51,7 @@ class KimiPlatform(BasePlatform):
             },
         )
 
-    def _run_google_oauth(self, ctx) -> dict:
+    def _run_google_oauth(self, ctx, artifacts) -> dict:
         if ctx.identity.oauth_provider and ctx.identity.oauth_provider != "google":
             raise RuntimeError("Kimi 当前仅支持 Google OAuth")
 
@@ -60,7 +60,9 @@ class KimiPlatform(BasePlatform):
         return register_with_google(
             proxy=ctx.proxy,
             email_hint=ctx.identity.email,
-            challenge_callback=ctx.challenge_callback,
+            challenge_callback=artifacts.challenge_callback,
+            captcha_solver=artifacts.captcha_solver,
+            phone_callback=artifacts.phone_callback,
             chrome_user_data_dir=ctx.identity.chrome_user_data_dir,
             chrome_cdp_url=ctx.identity.chrome_cdp_url,
             timeout=int(ctx.extra.get("browser_oauth_timeout") or 300),
@@ -73,7 +75,8 @@ class KimiPlatform(BasePlatform):
     def build_browser_registration_adapter(self):
         return BrowserRegistrationAdapter(
             result_mapper=self._map_result,
-            oauth_runner=self._run_google_oauth,
+            oauth_runner_with_artifacts=self._run_google_oauth,
+            use_captcha_for_oauth=True,
             capability=RegistrationCapability(
                 oauth_allowed_executor_types=("headed",),
                 browser_mailbox_requires_email=False,
