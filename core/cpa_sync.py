@@ -128,7 +128,7 @@ def sync_account_to_cpa(
             True,
             False,
             False,
-            f"当前 CPA 未提供 {platform} OAuth provider；如安装对应 CPA plugin 后可自动同步",
+            f"当前 CPA 不支持 {platform} OAuth provider；如安装对应 CPA plugin 后可自动同步",
         )
     if status_code < 200 or status_code >= 300:
         return CpaSyncResult(
