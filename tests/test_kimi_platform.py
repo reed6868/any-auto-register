@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 
 def test_kimi_is_exposed_with_evidence_backed_google_oauth_capability(client):
     response = client.get("/api/platforms")
@@ -42,3 +44,20 @@ def test_kimi_plugin_is_headed_oauth_only():
     assert adapter.browser_worker_builder is None
     assert platform.build_protocol_mailbox_adapter() is None
     assert platform.build_protocol_oauth_adapter() is None
+
+
+def test_kimi_default_instance_can_check_saved_account_but_cannot_register_protocol():
+    from core.base_platform import Account, RegisterConfig
+    from platforms.kimi.plugin import KimiPlatform
+
+    platform = KimiPlatform(config=RegisterConfig())
+    account = Account(
+        platform="kimi",
+        email="kimi@example.com",
+        password="",
+        extra={"cookies": "kimi_session=1"},
+    )
+
+    assert platform.check_valid(account) is True
+    with pytest.raises(NotImplementedError, match="headed"):
+        platform.register(email="kimi@example.com")
