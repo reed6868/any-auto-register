@@ -40,10 +40,16 @@ class RegistrationContext:
     @property
     def challenge_callback(self) -> Callable[[ChallengeRequest], ChallengeResponse] | None:
         from core.task_challenges import build_task_challenge_callback
+        from core.task_context import get_current_task_id
 
-        task_id = str(self.extra.get("_task_id") or "").strip()
-        timeout = float(self.extra.get("human_challenge_timeout") or 600)
-        return build_task_challenge_callback(task_id, timeout=timeout)
+        task_id = get_current_task_id()
+        if not task_id:
+            return None
+        try:
+            timeout = float(self.extra.get("human_challenge_timeout") or 600)
+        except (TypeError, ValueError):
+            timeout = 600
+        return build_task_challenge_callback(task_id, timeout=max(timeout, 1))
 
     def log(self, message: str) -> None:
         self.log_fn(message)
