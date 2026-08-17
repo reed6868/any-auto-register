@@ -98,11 +98,7 @@ class FakePhoneCallback:
     def __call__(self):
         value = next(self.values)
         if self.activation is None:
-            self.activation = SimpleNamespace(
-                country=self.country,
-                metadata={},
-                phone_number=value,
-            )
+            self.activation = SimpleNamespace(country=self.country, metadata={}, phone_number=value)
         return value
 
     def mark_send_succeeded(self):
@@ -138,7 +134,7 @@ def test_invisible_standard_turnstile_widget_still_uses_framework_solver():
     assert solver.calls == [(page.url, "site-key")]
 
 
-def test_phone_step_uses_framework_phone_callback_lazily_and_reports_success():
+def test_phone_step_confirms_send_only_after_otp_stage_and_reports_success():
     from core.registration.browser_verification import BrowserVerificationSupport
 
     page = FakePage()
@@ -150,12 +146,15 @@ def test_phone_step_uses_framework_phone_callback_lazily_and_reports_success():
     assert support.try_phone(page) is True
     assert page.phone.filled == "18885551234"
     assert support.phone_number == "18885551234"
-    assert phone.send_succeeded == 1
+    assert phone.send_succeeded == 0
     assert any("Send" in item for item in page.clicked)
 
+    # Captcha, if any, can now be solved before the SMS provider is told the
+    # target accepted the phone. Seeing the OTP stage confirms progression.
     page.phone.visible = False
     page.code.visible = True
     assert support.try_phone(page) is True
+    assert phone.send_succeeded == 1
     assert page.code.filled == "654321"
 
     support.mark_authenticated()
@@ -181,6 +180,11 @@ def test_phone_step_syncs_separate_country_code_before_send():
     assert page.dial.filled == "+1"
     assert page.phone.filled == "8885551234"
     assert support.phone_number == "+18885551234"
+    assert phone.send_succeeded == 0
+
+    page.phone.visible = False
+    page.code.visible = True
+    assert support.try_phone(page) is True
     assert phone.send_succeeded == 1
 
 
