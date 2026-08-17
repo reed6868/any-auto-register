@@ -24,6 +24,7 @@ _STOPPED_TASK_STATUSES = {
 @dataclass(slots=True)
 class _ChallengeState:
     challenge_id: str
+    payload: dict
     event: threading.Event = field(default_factory=threading.Event)
     response: ChallengeResponse | None = None
 
@@ -53,37 +54,18 @@ def _challenge_payload(challenge_id: str, request: ChallengeRequest) -> dict:
     }
 
 
-def _publish(task_id: str, challenge_id: str, request: ChallengeRequest) -> bool:
-    with Session(engine) as session:
-        task = session.get(TaskModel, task_id)
-        if not task or task.status in _STOPPED_TASK_STATUSES:
-            return False
-        result = task.get_result()
-        result["challenge"] = _challenge_payload(challenge_id, request)
-        task.set_result(result)
-        session.add(task)
-        session.commit()
-        return True
-
-
-def _clear(task_id: str, challenge_id: str) -> None:
-    with Session(engine) as session:
-        task = session.get(TaskModel, task_id)
-        if not task:
-            return
-        result = task.get_result()
-        current = result.get("challenge")
-        if isinstance(current, dict) and current.get("id") == challenge_id:
-            result["challenge"] = None
-            task.set_result(result)
-            session.add(task)
-            session.commit()
-
-
 def _task_stopped(task_id: str) -> bool:
     with Session(engine) as session:
         task = session.get(TaskModel, task_id)
         return bool(not task or task.status in _STOPPED_TASK_STATUSES)
+
+
+def get_task_challenge(task_id: str) -> dict | None:
+    """Return a copy of the currently active challenge, if any."""
+    normalized_task_id = str(task_id or "").strip()
+    with _states_lock:
+        state = _states.get(normalized_task_id)
+        return dict(state.payload) if state else None
 
 
 def request_human_challenge(
@@ -92,26 +74,28 @@ def request_human_challenge(
     *,
     timeout: float = 600,
 ) -> ChallengeResponse:
-    """Publish a user-action challenge and block until it is resolved/cancelled.
+    """Block until the current task's user-action challenge is resolved.
 
-    The challenge description is persisted in the existing task result JSON so
-    web clients can display it. The user's response value stays in memory and
-    is never persisted, which avoids storing transient 2FA/security material.
+    Challenge descriptions and responses stay in process memory. The task
+    database remains unchanged, avoiding lost result updates and avoiding
+    persistence of transient security/2FA material. Service restart already
+    interrupts running tasks, so persisting this ephemeral state is unnecessary.
     """
     normalized_task_id = str(task_id or "").strip()
-    if not normalized_task_id:
+    if not normalized_task_id or _task_stopped(normalized_task_id):
         return ChallengeResponse(completed=False)
 
     with _serial_lock(normalized_task_id):
+        if _task_stopped(normalized_task_id):
+            return ChallengeResponse(completed=False)
+
         challenge_id = uuid.uuid4().hex
-        state = _ChallengeState(challenge_id=challenge_id)
+        state = _ChallengeState(
+            challenge_id=challenge_id,
+            payload=_challenge_payload(challenge_id, request),
+        )
         with _states_lock:
             _states[normalized_task_id] = state
-
-        if not _publish(normalized_task_id, challenge_id, request):
-            with _states_lock:
-                _states.pop(normalized_task_id, None)
-            return ChallengeResponse(completed=False)
 
         deadline = time.monotonic() + max(float(timeout or 0), 0.1)
         try:
@@ -124,7 +108,6 @@ def request_human_challenge(
                 if _task_stopped(normalized_task_id):
                     return ChallengeResponse(completed=False)
         finally:
-            _clear(normalized_task_id, challenge_id)
             with _states_lock:
                 current = _states.get(normalized_task_id)
                 if current is state:
