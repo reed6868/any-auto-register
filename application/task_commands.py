@@ -4,6 +4,8 @@ import asyncio
 import json
 from typing import AsyncIterator
 
+from sqlmodel import Session
+
 from application.tasks import (
     TASK_STATUS_CANCELLED,
     TASK_STATUS_FAILED,
@@ -14,20 +16,49 @@ from application.tasks import (
     list_task_events,
     request_cancel,
 )
+from core.db import TaskModel, engine
+from core.registration import ChallengeResponse
+from core.task_challenges import resolve_task_challenge
 from services.task_runtime import task_runtime
 
 
 class TaskCommandsService:
     def create_register_task(self, payload: dict) -> dict:
         task = create_register_task(payload)
+        task_id = str(task.get("task_id") or "")
+        if task_id:
+            with Session(engine) as session:
+                model = session.get(TaskModel, task_id)
+                if model:
+                    stored_payload = model.get_payload()
+                    extra = dict(stored_payload.get("extra") or {})
+                    extra["_task_id"] = task_id
+                    stored_payload["extra"] = extra
+                    model.set_payload(stored_payload)
+                    session.add(model)
+                    session.commit()
         task_runtime.wake_up()
-        return task
+        return get_task(task_id) or task
 
     def cancel_task(self, task_id: str) -> dict | None:
         task = request_cancel(task_id)
         if task:
             task_runtime.wake_up()
         return task
+
+    def resolve_challenge(
+        self,
+        task_id: str,
+        *,
+        completed: bool,
+        value: str = "",
+        challenge_id: str = "",
+    ) -> bool:
+        return resolve_task_challenge(
+            task_id,
+            ChallengeResponse(completed=completed, value=value),
+            challenge_id=challenge_id,
+        )
 
     async def stream_task_events(self, task_id: str, *, since: int = 0) -> AsyncIterator[str]:
         cursor = since
