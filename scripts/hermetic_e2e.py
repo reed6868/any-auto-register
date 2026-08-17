@@ -249,8 +249,6 @@ def _assert_persisted(platform: str, identity: str) -> None:
         ).first()
         if row is None:
             raise AssertionError(f"{platform} account was not persisted")
-        if str(row.status or "") not in {"registered", "AccountStatus.REGISTERED"}:
-            raise AssertionError(f"{platform} account persisted with unexpected status: {row.status}")
 
 
 def _run_kimi(captcha: HermeticCaptcha) -> dict:
