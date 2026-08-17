@@ -79,7 +79,8 @@ def _first_visible(page, selectors: tuple[str, ...]):
 def _click_first(page, labels: tuple[str, ...]) -> bool:
     for label in labels:
         try:
-            locator = page.get_by_role("button", name=re.compile(re.escape(label), re.I)).first
+            pattern = re.compile(rf"^\s*{re.escape(label)}\s*$", re.I)
+            locator = page.get_by_role("button", name=pattern).first
             if locator.is_visible(timeout=250):
                 locator.click()
                 return True
