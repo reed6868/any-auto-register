@@ -130,3 +130,22 @@ def test_phone_step_uses_framework_phone_callback_lazily_and_reports_success():
 
     support.mark_authenticated()
     assert phone.success == 1
+
+
+def test_scoped_browser_verification_does_not_touch_third_party_oauth_pages():
+    from core.registration.browser_verification import BrowserVerificationSupport
+
+    page = FakePage()
+    page.url = "https://accounts.google.com/signin/v2/challenge"
+    page.phone.visible = True
+    solver = FakeCaptcha()
+    phone = FakePhoneCallback()
+    support = BrowserVerificationSupport(
+        captcha_solver=solver,
+        phone_callback=phone,
+        allowed_domain_substrings=("kimi.com",),
+    )
+
+    assert support.try_handle(page) is False
+    assert solver.calls == []
+    assert page.phone.filled == ""
