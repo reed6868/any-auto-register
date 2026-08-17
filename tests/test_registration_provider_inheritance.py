@@ -175,6 +175,7 @@ def test_zai_mailbox_and_oauth_adapters_pass_framework_artifacts_without_human_w
     assert worker.phone_callback is artifacts.phone_callback
     assert worker.captcha_solver is artifacts.captcha_solver
     assert worker.challenge_callback is None
+    assert worker.verification.sync_phone_country_code is True
 
     captured = {}
 
