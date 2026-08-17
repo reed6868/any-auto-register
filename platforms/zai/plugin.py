@@ -57,14 +57,16 @@ class ZAIPlatform(BasePlatform):
             },
         )
 
-    def _run_oauth(self, ctx) -> dict:
+    def _run_oauth(self, ctx, artifacts) -> dict:
         from platforms.zai.browser_register import register_with_oauth
 
         return register_with_oauth(
             proxy=ctx.proxy,
             oauth_provider=ctx.identity.oauth_provider,
             email_hint=ctx.identity.email,
-            challenge_callback=ctx.challenge_callback,
+            challenge_callback=artifacts.challenge_callback,
+            captcha_solver=artifacts.captcha_solver,
+            phone_callback=artifacts.phone_callback,
             chrome_user_data_dir=ctx.identity.chrome_user_data_dir,
             chrome_cdp_url=ctx.identity.chrome_cdp_url,
             timeout=int(ctx.extra.get("browser_oauth_timeout") or 300),
@@ -79,6 +81,8 @@ class ZAIPlatform(BasePlatform):
                 proxy=ctx.proxy,
                 otp_callback=artifacts.otp_callback,
                 challenge_callback=artifacts.challenge_callback,
+                captcha_solver=artifacts.captcha_solver,
+                phone_callback=artifacts.phone_callback,
                 timeout=int(ctx.extra.get("browser_register_timeout") or 300),
                 log_fn=ctx.log,
             )
@@ -90,7 +94,9 @@ class ZAIPlatform(BasePlatform):
                 email=ctx.identity.email or "",
                 password=ctx.password or "",
             ),
-            oauth_runner=self._run_oauth,
+            oauth_runner_with_artifacts=self._run_oauth,
+            use_captcha_for_mailbox=True,
+            use_captcha_for_oauth=True,
             capability=RegistrationCapability(
                 oauth_allowed_executor_types=("headed",),
             ),
