@@ -6,7 +6,6 @@ import threading
 import time
 
 from application.tasks import claim_next_runnable_task, execute_task, mark_incomplete_tasks_interrupted
-from core.task_context import clear_current_task_id, set_current_task_id
 
 
 @dataclass(slots=True)
@@ -86,11 +85,9 @@ class TaskRuntime:
         self._reap_workers()
 
     def _run_task(self, task_id: str) -> None:
-        set_current_task_id(task_id)
         try:
             execute_task(task_id)
         finally:
-            clear_current_task_id()
             with self._lock:
                 self._workers.pop(task_id, None)
 
