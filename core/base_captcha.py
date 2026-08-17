@@ -8,16 +8,21 @@ class BaseCaptcha(ABC):
         """返回 Turnstile token"""
         ...
 
+    def solve_geetest(self, page_url: str, params: dict, *, proxy: str = "") -> dict:
+        """返回 GeeTest v3/v4 标准验证结果。
+
+        GeeTest is optional because not every configured provider supports it.
+        Browser flows fail fast when the target requires GeeTest but the selected
+        provider has no implementation instead of falling back to manual input.
+        """
+        raise NotImplementedError(f"{type(self).__name__} 当前不支持 GeeTest")
+
     @abstractmethod
     def solve_image(self, image_b64: str) -> str:
         """返回图片验证码文字"""
         ...
 
 
-# ---------------------------------------------------------------------------
-# Lazy re-exports for backward compatibility
-# (concrete classes now live under providers/captcha/)
-# ---------------------------------------------------------------------------
 _LAZY_IMPORTS = {
     "YesCaptcha": "providers.captcha.yescaptcha",
     "TwoCaptcha": "providers.captcha.twocaptcha",
