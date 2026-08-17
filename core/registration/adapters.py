@@ -30,10 +30,12 @@ class BrowserRegistrationAdapter:
     browser_worker_builder: Callable[[RegistrationContext, RegistrationArtifacts], Any] | None = None
     browser_register_runner: Callable[[Any, RegistrationContext, RegistrationArtifacts], Any] | None = None
     oauth_runner: Callable[[RegistrationContext], Any] | None = None
+    oauth_runner_with_artifacts: Callable[[RegistrationContext, RegistrationArtifacts], Any] | None = None
     capability: RegistrationCapability = field(default_factory=RegistrationCapability)
     otp_spec: OtpSpec | None = None
     link_spec: LinkSpec | None = None
     use_captcha_for_mailbox: bool = False
+    use_captcha_for_oauth: bool = False
     preflight: Callable[[RegistrationContext], None] | None = None
 
 
