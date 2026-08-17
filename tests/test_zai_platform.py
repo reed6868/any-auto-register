@@ -63,7 +63,10 @@ def test_zai_plugin_builds_browser_adapter_without_protocol_registration():
 
     assert adapter.browser_worker_builder is not None
     assert adapter.browser_register_runner is not None
-    assert adapter.oauth_runner is not None
+    assert adapter.oauth_runner_with_artifacts is not None
+    assert adapter.oauth_runner is None
+    assert adapter.use_captcha_for_mailbox is True
+    assert adapter.use_captcha_for_oauth is True
     assert platform.build_protocol_mailbox_adapter() is None
     assert platform.build_protocol_oauth_adapter() is None
 
