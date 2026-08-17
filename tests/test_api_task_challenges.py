@@ -4,10 +4,10 @@ import threading
 import time
 import uuid
 
-from application.tasks import TASK_STATUS_RUNNING, get_task
+from application.tasks import TASK_STATUS_RUNNING
 from core.db import TaskModel, engine
 from core.registration import ChallengeRequest, ChallengeResponse
-from core.task_challenges import request_human_challenge
+from core.task_challenges import get_task_challenge, request_human_challenge
 from sqlmodel import Session
 
 
@@ -30,8 +30,7 @@ def _create_running_task(platform: str) -> str:
 def _wait_for_challenge(task_id: str, timeout: float = 2.0) -> dict:
     deadline = time.time() + timeout
     while time.time() < deadline:
-        task = get_task(task_id) or {}
-        challenge = (task.get("result") or {}).get("challenge")
+        challenge = get_task_challenge(task_id)
         if challenge:
             return challenge
         time.sleep(0.01)
@@ -53,6 +52,10 @@ def test_api_can_resolve_active_human_challenge(client):
     thread.start()
     challenge = _wait_for_challenge(task_id)
 
+    task_snapshot = client.get(f"/api/tasks/{task_id}")
+    assert task_snapshot.status_code == 200
+    assert task_snapshot.json()["result"]["challenge"]["id"] == challenge["id"]
+
     response = client.post(
         f"/api/tasks/{task_id}/challenge",
         json={
@@ -66,6 +69,7 @@ def test_api_can_resolve_active_human_challenge(client):
     thread.join(timeout=2)
     assert thread.is_alive() is False
     assert holder["response"].completed is True
+    assert get_task_challenge(task_id) is None
 
 
 def test_api_rejects_missing_or_stale_human_challenge(client):
