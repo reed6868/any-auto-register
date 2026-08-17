@@ -29,7 +29,7 @@ class RegisterTaskRequest(BaseModel):
 class HumanChallengeResponseRequest(BaseModel):
     completed: bool = True
     value: str = ""
-    challenge_id: str = ""
+    challenge_id: str = Field(min_length=1)
 
 
 @router.post("/register")
