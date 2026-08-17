@@ -144,6 +144,7 @@ def register_with_google(
     verification = BrowserVerificationSupport(
         captcha_solver=captcha_solver,
         phone_callback=phone_callback,
+        allowed_domain_substrings=("kimi.com",),
         log_fn=log_fn,
     )
     with OAuthBrowser(
