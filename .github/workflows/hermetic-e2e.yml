@@ -33,6 +33,7 @@ jobs:
     env:
       ACCOUNT_MANAGER_DATABASE_URL: sqlite:////tmp/any-auto-register-hermetic-e2e.db
       PYTHONUNBUFFERED: '1'
+      PYTHONPATH: ${{ github.workspace }}
 
     steps:
       - name: Checkout
