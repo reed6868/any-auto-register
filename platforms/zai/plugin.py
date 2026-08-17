@@ -94,4 +94,10 @@ class ZAIPlatform(BasePlatform):
 
     def check_valid(self, account: Account) -> bool:
         extra = dict(account.extra or {})
-        return bool(str(extra.get("cookies") or "").strip() or str(extra.get("storage_state") or "").strip())
+        overview = extra.get("account_overview") if isinstance(extra.get("account_overview"), dict) else {}
+        legacy_extra = overview.get("legacy_extra") if isinstance(overview.get("legacy_extra"), dict) else {}
+        return bool(
+            str(extra.get("cookies") or "").strip()
+            or str(extra.get("storage_state") or "").strip()
+            or str(legacy_extra.get("storage_state") or "").strip()
+        )
