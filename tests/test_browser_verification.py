@@ -35,7 +35,7 @@ class FakePage:
             return self.turnstile
         if "tel" in selector:
             return self.phone
-        if "one-time-code" in selector or "code" in selector or "otp" in selector:
+        if "one-time-code" in selector or "code" in selector or "otp" in selector or "verification" in selector:
             return self.code
         return FakeLocator(visible=False)
 
@@ -93,7 +93,6 @@ def test_turnstile_uses_framework_solver_and_injects_response():
     assert support.try_turnstile(page) is True
     assert solver.calls == [(page.url, "site-key")]
     assert page.injected_token == "captcha-token"
-    # The same widget must not consume provider quota twice.
     assert support.try_turnstile(page) is False
     assert len(solver.calls) == 1
 
@@ -121,7 +120,9 @@ def test_phone_step_uses_framework_phone_callback_lazily_and_reports_success():
 
     assert support.try_phone(page) is True
     assert page.phone.filled == "18885551234"
+    assert support.phone_number == "18885551234"
     assert phone.send_succeeded == 1
+    assert any("Send" in item for item in page.clicked)
 
     page.phone.visible = False
     page.code.visible = True
