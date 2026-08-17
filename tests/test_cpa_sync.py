@@ -26,6 +26,10 @@ class FakeHttp:
         return self.responses.pop(0)
 
 
+def _account(platform: str, email: str) -> Account:
+    return Account(platform=platform, email=email, password="")
+
+
 def test_kimi_cpa_sync_uses_native_oauth_and_waits_for_success():
     from core.cpa_sync import sync_account_to_cpa
 
@@ -43,7 +47,7 @@ def test_kimi_cpa_sync_uses_native_oauth_and_waits_for_success():
         return ChallengeResponse(completed=True)
 
     result = sync_account_to_cpa(
-        Account(platform="kimi", email="kimi@example.com"),
+        _account("kimi", "kimi@example.com"),
         api_url="http://127.0.0.1:8317",
         api_key="secret",
         http_client=http,
@@ -68,7 +72,7 @@ def test_zai_cpa_sync_is_best_effort_when_provider_route_is_not_supported():
 
     http = FakeHttp([FakeResponse(status_code=404, payload={"message": "not found"})])
     result = sync_account_to_cpa(
-        Account(platform="zai", email="zai@example.com"),
+        _account("zai", "zai@example.com"),
         api_url="http://127.0.0.1:8317/v0/management",
         api_key="secret",
         http_client=http,
@@ -86,7 +90,7 @@ def test_unrelated_platform_preserves_previous_no_cpa_behavior():
 
     http = FakeHttp([])
     result = sync_account_to_cpa(
-        Account(platform="cursor", email="cursor@example.com"),
+        _account("cursor", "cursor@example.com"),
         api_url="http://127.0.0.1:8317",
         api_key="secret",
         http_client=http,
@@ -110,7 +114,7 @@ def test_chatgpt_cpa_sync_preserves_existing_auth_file_upload(monkeypatch):
 
     monkeypatch.setattr(cpa_upload, "upload_to_cpa", fake_upload)
     result = sync_account_to_cpa(
-        Account(platform="chatgpt", email="gpt@example.com"),
+        _account("chatgpt", "gpt@example.com"),
         api_url="http://127.0.0.1:8317",
         api_key="secret",
     )
@@ -140,7 +144,7 @@ def test_task_auto_upload_cpa_no_longer_filters_kimi(monkeypatch):
     logger = TaskLogger("task-test")
     monkeypatch.setattr(logger, "log", lambda *args, **kwargs: None)
 
-    _auto_upload_cpa(logger, Account(platform="kimi", email="kimi@example.com"))
+    _auto_upload_cpa(logger, _account("kimi", "kimi@example.com"))
 
     assert calls
     assert calls[0][0] == "kimi"
