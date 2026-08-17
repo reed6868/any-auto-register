@@ -24,7 +24,6 @@ class CpaSyncResult:
 def _config_value(key: str) -> str:
     try:
         from core.config_store import config_store
-
         return str(config_store.get(key, "") or "").strip()
     except Exception:
         return ""
@@ -114,7 +113,10 @@ def _auto_authorize_kimi_device(
     except Exception as exc:
         return False, f"Playwright 不可用: {exc}"
 
-    proxy_cfg = _proxy_config(extra.get("registration_proxy") or "")
+    proxy_cfg = _proxy_config(
+        str(getattr(account, "_registration_proxy", "") or "")
+        or str(extra.get("registration_proxy") or "")
+    )
     browser = None
     context = None
     try:
@@ -141,22 +143,12 @@ def _auto_authorize_kimi_device(
             deadline = time.monotonic() + max(float(timeout or 0), 1)
             positive = re.compile(r"authorize|allow|confirm|approve|同意|允许|授权|确认", re.I)
             success_markers = (
-                "authorization successful",
-                "successfully authorized",
-                "device authorized",
-                "you may close",
-                "authorization complete",
-                "授权成功",
-                "已授权",
+                "authorization successful", "successfully authorized", "device authorized",
+                "you may close", "authorization complete", "授权成功", "已授权",
             )
             login_markers = (
-                "log in with phone number",
-                "continue with google",
-                "verification code",
-                "scan qr",
-                "two-factor",
-                "2fa",
-                "security verification",
+                "log in with phone number", "continue with google", "verification code",
+                "scan qr", "two-factor", "2fa", "security verification",
             )
             clicked = False
 
@@ -181,7 +173,6 @@ def _auto_authorize_kimi_device(
                         continue
                 except Exception:
                     pass
-
                 try:
                     link = page.get_by_role("link", name=positive).first
                     if link.is_visible(timeout=300):
@@ -192,8 +183,6 @@ def _auto_authorize_kimi_device(
                         continue
                 except Exception:
                     pass
-
-                # Some device pages close or redirect after a successful click.
                 if clicked and (page.is_closed() or "auth.kimi.com" not in str(page.url or "")):
                     return True, "Kimi CPA device authorization 已提交"
                 time.sleep(0.5)
@@ -242,7 +231,6 @@ def sync_account_to_cpa(
 
     if platform == "chatgpt":
         from platforms.chatgpt.cpa_upload import generate_token_json, upload_to_cpa
-
         token_data = generate_token_json(_chatgpt_proxy(account))
         ok, message = upload_to_cpa(token_data, api_url=resolved_url, api_key=resolved_key)
         return CpaSyncResult(True, True, bool(ok), str(message or ""))
@@ -262,19 +250,9 @@ def sync_account_to_cpa(
 
     status_code = int(getattr(response, "status_code", 0) or 0)
     if status_code == 404:
-        return CpaSyncResult(
-            True,
-            False,
-            False,
-            f"当前 CPA 不支持 {platform} OAuth provider；如安装对应 CPA plugin 后可自动同步",
-        )
+        return CpaSyncResult(True, False, False, f"当前 CPA 不支持 {platform} OAuth provider；如安装对应 CPA plugin 后可自动同步")
     if status_code < 200 or status_code >= 300:
-        return CpaSyncResult(
-            True,
-            True,
-            False,
-            _message_from_response(response, f"CPA {platform} OAuth 启动失败: HTTP {status_code}"),
-        )
+        return CpaSyncResult(True, True, False, _message_from_response(response, f"CPA {platform} OAuth 启动失败: HTTP {status_code}"))
 
     try:
         payload = response.json()
@@ -298,23 +276,10 @@ def sync_account_to_cpa(
         else:
             authorized, auth_message = bool(auth_result), ""
         if not authorized:
-            return CpaSyncResult(
-                True,
-                True,
-                False,
-                auth_message or "Kimi CPA device authorization 无法无人值守完成",
-            )
+            return CpaSyncResult(True, True, False, auth_message or "Kimi CPA device authorization 无法无人值守完成")
     elif platform == "zai":
-        # Stock CLIProxyAPI currently has no built-in Z.AI provider. If a plugin
-        # adds a route it must also supply a non-interactive authorizer contract;
-        # never turn that into a hidden manual wait here.
         if device_authorizer is None:
-            return CpaSyncResult(
-                True,
-                True,
-                False,
-                "CPA Z.AI provider 路由存在，但 any-auto-register 未获得其无人值守授权契约",
-            )
+            return CpaSyncResult(True, True, False, "CPA Z.AI provider 路由存在，但 any-auto-register 未获得其无人值守授权契约")
         try:
             auth_result = device_authorizer(account, auth_url, timeout=min(max(poll_timeout, 1), 60), log_fn=log)
         except TypeError:
@@ -330,24 +295,12 @@ def sync_account_to_cpa(
     status_url = f"{management_base}/get-auth-status"
     while time.monotonic() < deadline:
         try:
-            status_response = client.get(
-                status_url,
-                headers=headers,
-                params={"state": state},
-                timeout=20,
-                verify=False,
-            )
+            status_response = client.get(status_url, headers=headers, params={"state": state}, timeout=20, verify=False)
         except Exception as exc:
             return CpaSyncResult(True, True, False, f"CPA {platform} OAuth 状态查询失败: {exc}")
-
         code = int(getattr(status_response, "status_code", 0) or 0)
         if code < 200 or code >= 300:
-            return CpaSyncResult(
-                True,
-                True,
-                False,
-                _message_from_response(status_response, f"CPA OAuth 状态查询失败: HTTP {code}"),
-            )
+            return CpaSyncResult(True, True, False, _message_from_response(status_response, f"CPA OAuth 状态查询失败: HTTP {code}"))
         try:
             status_payload = status_response.json()
         except Exception:
