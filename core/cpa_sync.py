@@ -10,6 +10,9 @@ import requests
 from core.registration import ChallengeRequest, ChallengeResponse
 
 
+CPA_SYNC_PLATFORMS = {"chatgpt", "kimi", "zai"}
+
+
 @dataclass(slots=True)
 class CpaSyncResult:
     attempted: bool
@@ -84,10 +87,14 @@ def sync_account_to_cpa(
 ) -> CpaSyncResult:
     """Best-effort CPA synchronization after the account has been persisted.
 
-    ChatGPT keeps the existing auth-file upload path. Other platforms use CPA's
+    ChatGPT keeps the existing auth-file upload path. Kimi/Z.AI use CPA's
     provider OAuth management endpoint. This deliberately does not convert a web
     cookie into an unrelated CPA credential format.
     """
+
+    platform = str(getattr(account, "platform", "") or "").strip().lower()
+    if platform not in CPA_SYNC_PLATFORMS:
+        return CpaSyncResult(False, False, False, f"{platform or 'unknown'} 未启用 CPA 自动同步")
 
     log = log_fn or (lambda message: None)
     resolved_url = str(api_url if api_url is not None else _config_value("cpa_api_url")).strip()
@@ -95,16 +102,12 @@ def sync_account_to_cpa(
     if not resolved_url:
         return CpaSyncResult(False, True, False, "CPA API URL 未配置")
 
-    platform = str(getattr(account, "platform", "") or "").strip().lower()
     if platform == "chatgpt":
         from platforms.chatgpt.cpa_upload import generate_token_json, upload_to_cpa
 
         token_data = generate_token_json(_chatgpt_proxy(account))
         ok, message = upload_to_cpa(token_data, api_url=resolved_url, api_key=resolved_key)
         return CpaSyncResult(True, True, bool(ok), str(message or ""))
-
-    if not platform:
-        return CpaSyncResult(False, False, False, "账号缺少 platform，无法同步 CPA")
 
     client = http_client or requests
     management_base = _management_base(resolved_url)
