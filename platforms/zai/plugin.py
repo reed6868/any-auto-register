@@ -34,6 +34,11 @@ class ZAIPlatform(BasePlatform):
             raise NotImplementedError("Z.AI 注册仅支持 headed 浏览器执行器")
         return super().register(email=email, password=password)
 
+    def _prepare_registration_password(self, password: str | None) -> str | None:
+        if self._get_identity_provider_name() == "oauth_browser":
+            return ""
+        return super()._prepare_registration_password(password)
+
     @staticmethod
     def _map_result(ctx, result: dict) -> RegistrationResult:
         cookies = str(result.get("cookies") or "")
