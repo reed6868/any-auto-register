@@ -26,6 +26,12 @@ class RegisterTaskRequest(BaseModel):
     extra: dict = Field(default_factory=dict)
 
 
+class HumanChallengeResponseRequest(BaseModel):
+    completed: bool = True
+    value: str = ""
+    challenge_id: str = ""
+
+
 @router.post("/register")
 def create_register_task(body: RegisterTaskRequest):
     return command_service.create_register_task(body.model_dump())
@@ -37,6 +43,21 @@ def cancel_task(task_id: str):
     if not task:
         raise HTTPException(404, "任务不存在")
     return task
+
+
+@router.post("/{task_id}/challenge")
+def resolve_human_challenge(task_id: str, body: HumanChallengeResponseRequest):
+    if not query_service.get_task(task_id):
+        raise HTTPException(404, "任务不存在")
+    ok = command_service.resolve_challenge(
+        task_id,
+        completed=body.completed,
+        value=body.value,
+        challenge_id=body.challenge_id,
+    )
+    if not ok:
+        raise HTTPException(409, "当前没有可处理的人机验证，或 challenge 已过期")
+    return {"ok": True}
 
 
 @router.get("/{task_id}/logs/stream")
