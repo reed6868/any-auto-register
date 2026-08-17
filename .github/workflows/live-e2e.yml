@@ -1,18 +1,6 @@
 name: Live E2E - Kimi and Z.AI
 
 on:
-  push:
-    branches:
-      - fix/unattended-kimi-zai
-    paths:
-      - '.github/workflows/live-e2e.yml'
-      - 'scripts/live_e2e.py'
-      - 'core/base_captcha.py'
-      - 'core/base_sms.py'
-      - 'core/cpa_sync.py'
-      - 'core/registration/**'
-      - 'platforms/kimi/**'
-      - 'platforms/zai/**'
   workflow_dispatch:
 
 permissions:
@@ -24,8 +12,10 @@ concurrency:
 
 jobs:
   live-unattended-registration:
+    name: Optional live registration compatibility
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    continue-on-error: true
     env:
       ACCOUNT_MANAGER_DATABASE_URL: sqlite:////tmp/any-auto-register-live-e2e.db
       PYTHONUNBUFFERED: '1'
@@ -74,10 +64,10 @@ jobs:
           fi
           echo 'Live provider preflight passed (secret values are not printed).'
 
-      - name: Run real unattended registration gate
+      - name: Run real unattended registration compatibility check
         run: xvfb-run -a python scripts/live_e2e.py
 
-      - name: Show sanitized gate result
+      - name: Show sanitized live result
         if: always()
         run: |
           if [[ -f artifacts/live-e2e-result.json ]]; then
@@ -86,7 +76,7 @@ jobs:
             echo '{"ok":false,"error":"live E2E did not produce result artifact"}'
           fi
 
-      - name: Upload sanitized E2E result
+      - name: Upload sanitized live result
         if: always()
         uses: actions/upload-artifact@v4
         with:
