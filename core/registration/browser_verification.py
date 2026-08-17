@@ -29,12 +29,20 @@ def _click_first(page, labels: tuple[str, ...]) -> bool:
 
 def _turnstile_sitekey(page) -> str:
     try:
+        # Managed/invisible Turnstile widgets can be present in the DOM without a
+        # visible box. Presence of the standard data-sitekey attribute is enough.
         widget = page.locator("[data-sitekey]").first
-        if widget.is_visible(timeout=250):
+        return str(widget.get_attribute("data-sitekey", timeout=250) or "").strip()
+    except TypeError:
+        # Test doubles and older Playwright-compatible wrappers may not accept a
+        # timeout keyword on get_attribute().
+        try:
+            widget = page.locator("[data-sitekey]").first
             return str(widget.get_attribute("data-sitekey") or "").strip()
+        except Exception:
+            return ""
     except Exception:
-        pass
-    return ""
+        return ""
 
 
 def _inject_turnstile_response(page, token: str) -> bool:
