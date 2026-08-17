@@ -228,6 +228,7 @@ def test_windsurf_generate_trial_link_falls_back_to_next_turnstile_provider(monk
             *,
             account_id: str = "",
             org_id: str = "",
+            auth1_token: str = "",
             turnstile_token: str,
             success_url: str = "",
             cancel_url: str = "",
@@ -307,6 +308,7 @@ def test_windsurf_generate_trial_link_refreshes_session_after_subscribe_401(monk
             *,
             account_id: str = "",
             org_id: str = "",
+            auth1_token: str = "",
             turnstile_token: str,
             success_url: str = "",
             cancel_url: str = "",
@@ -317,6 +319,7 @@ def test_windsurf_generate_trial_link_refreshes_session_after_subscribe_401(monk
             assert session_token == "devin-session-token-refreshed"
             assert account_id == "account-refreshed"
             assert org_id == "org-refreshed"
+            assert auth1_token == "auth1-refreshed"
             return {"checkout_url": "https://checkout.stripe.com/c/pay/cs_test_refreshed"}
 
     monkeypatch.setattr(WindsurfPlatform, "_get_captcha_solver_candidates", lambda self: ["local_solver"])
@@ -367,10 +370,12 @@ def test_windsurf_payment_link_returns_checkout_only(monkeypatch):
             *,
             account_id: str = "",
             org_id: str = "",
+            auth1_token: str = "",
             turnstile_token: str,
             success_url: str = "",
             cancel_url: str = "",
         ) -> dict[str, str]:
+            assert auth1_token == "auth1-token"
             return {"checkout_url": "https://checkout.stripe.com/c/pay/cs_test_windsurf"}
 
     import platforms.windsurf.core as windsurf_core
