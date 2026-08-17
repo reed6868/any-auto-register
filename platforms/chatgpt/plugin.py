@@ -13,10 +13,10 @@ def _result_text(result, key: str) -> str:
     return str(getattr(result, key, "") or "")
 
 
-def _assert_complete_oauth_callback(result) -> None:
-    # NextAuth 流程只返回 account_id + access_token (+ session_token)
-    # 传统 Codex CLI 流程返回全部 4 个字段
-    required = ("account_id", "access_token")
+def _assert_complete_oauth_callback(result, *, allow_nextauth_partial: bool = False) -> None:
+    required = ["account_id", "access_token"]
+    if not allow_nextauth_partial:
+        required.extend(["refresh_token", "id_token"])
     missing = [key for key in required if not _result_text(result, key)]
     if missing:
         raise RuntimeError(
@@ -55,14 +55,13 @@ class ChatGPTPlatform(BasePlatform):
     supported_oauth_providers = ["google", "microsoft"]
     protocol_captcha_order = ("2captcha", "capsolver", "auto")
 
-    # Declarative capabilities
     capabilities = [
-        "query_state",      # Query account state/quota
-        "refresh_token",    # Refresh auth token
-        "generate_link",    # Generate payment link
-        "switch_desktop",   # Switch to Codex desktop
-        "upload_cpa",       # Upload to CPA system
-        "upload_tm",        # Upload to Team Manager
+        "query_state",
+        "refresh_token",
+        "generate_link",
+        "switch_desktop",
+        "upload_cpa",
+        "upload_tm",
     ]
 
     def __init__(self, config: RegisterConfig = None, mailbox: BaseMailbox = None):
@@ -125,7 +124,7 @@ class ChatGPTPlatform(BasePlatform):
         return _generate_chatgpt_registration_password()
 
     def _map_chatgpt_result(self, result: dict, *, password: str = "", user_id: str = "") -> RegistrationResult:
-        _assert_complete_oauth_callback(result)
+        _assert_complete_oauth_callback(result, allow_nextauth_partial=True)
         return RegistrationResult(
             email=result.get("email", ""),
             password=password or result.get("password", ""),
@@ -334,7 +333,6 @@ class ChatGPTPlatform(BasePlatform):
 
         raise NotImplementedError(f"Unknown action: {action_id}")
 
-    # Override specific capability handlers
     def _handle_query_state(self, account: Account, params: dict) -> dict:
         """Handle query_state capability for ChatGPT."""
         proxy = self.config.proxy if self.config else None
@@ -404,7 +402,6 @@ class ChatGPTPlatform(BasePlatform):
         plan = params.get("plan", "plus")
         country = params.get("country", "US")
 
-        # Manually construct basic cookie in case old accounts don't have complete cookie string
         if not a.cookies and a.session_token:
             a.cookies = f"__Secure-next-auth.session-token={a.session_token}"
 
@@ -413,10 +410,7 @@ class ChatGPTPlatform(BasePlatform):
         else:
             url = generate_team_link(a, proxy=proxy, country=country)
 
-        # Use local fingerprint browser incognito to mount Cookie and force open payment page
         if url and a.cookies:
             open_url_incognito(url, a.cookies)
 
-        return {"ok": bool(url), "data": {"url": url, "message": "Payment link generated, opening browser with credentials..."}} 
-
-    
+        return {"ok": bool(url), "data": {"url": url, "message": "Payment link generated, opening browser with credentials..."}}
