@@ -15,15 +15,22 @@ def _wait_until(predicate, timeout: float = 2.0) -> bool:
     return False
 
 
-def test_task_human_challenge_waits_for_user_and_resumes():
-    from application.tasks import (
-        TASK_STATUS_RUNNING,
-        TASK_STATUS_WAITING_USER,
-        create_task,
-        get_task,
-        request_human_challenge,
-        resolve_task_challenge,
-    )
+def _mark_running(task_id: str) -> None:
+    from application.tasks import TASK_STATUS_RUNNING
+    from core.db import TaskModel, engine
+    from sqlmodel import Session
+
+    with Session(engine) as session:
+        task = session.get(TaskModel, task_id)
+        assert task is not None
+        task.status = TASK_STATUS_RUNNING
+        session.add(task)
+        session.commit()
+
+
+def test_task_human_challenge_waits_for_user_and_clears_result():
+    from application.tasks import TASK_STATUS_RUNNING, create_task, get_task
+    from core.task_challenges import request_human_challenge, resolve_task_challenge
 
     task = create_task(
         task_type="register",
@@ -32,6 +39,7 @@ def test_task_human_challenge_waits_for_user_and_resumes():
         progress_total=1,
     )
     task_id = task["task_id"]
+    _mark_running(task_id)
 
     holder: dict[str, ChallengeResponse] = {}
 
@@ -50,20 +58,23 @@ def test_task_human_challenge_waits_for_user_and_resumes():
     thread = threading.Thread(target=run_challenge)
     thread.start()
 
-    assert _wait_until(lambda: (get_task(task_id) or {}).get("status") == TASK_STATUS_WAITING_USER)
+    assert _wait_until(
+        lambda: bool(((get_task(task_id) or {}).get("result") or {}).get("challenge"))
+    )
     waiting = get_task(task_id)
     assert waiting is not None
+    assert waiting["status"] == TASK_STATUS_RUNNING
     assert waiting["terminal"] is False
-    assert waiting["challenge"]["kind"] == "oauth_confirmation"
-    assert waiting["challenge"]["url"] == "https://chat.z.ai/auth"
-    challenge_id = waiting["challenge"]["id"]
+    challenge = waiting["result"]["challenge"]
+    assert challenge["kind"] == "oauth_confirmation"
+    assert challenge["url"] == "https://chat.z.ai/auth"
 
     resolved = resolve_task_challenge(
         task_id,
         ChallengeResponse(completed=True),
-        challenge_id=challenge_id,
+        challenge_id=challenge["id"],
     )
-    assert resolved is not None
+    assert resolved is True
 
     thread.join(timeout=2)
     assert thread.is_alive() is False
@@ -72,17 +83,12 @@ def test_task_human_challenge_waits_for_user_and_resumes():
     resumed = get_task(task_id)
     assert resumed is not None
     assert resumed["status"] == TASK_STATUS_RUNNING
-    assert resumed["challenge"] is None
+    assert resumed["result"].get("challenge") is None
 
 
 def test_task_human_challenge_rejects_stale_challenge_id():
-    from application.tasks import (
-        TASK_STATUS_WAITING_USER,
-        create_task,
-        get_task,
-        request_human_challenge,
-        resolve_task_challenge,
-    )
+    from application.tasks import create_task, get_task
+    from core.task_challenges import request_human_challenge, resolve_task_challenge
 
     task = create_task(
         task_type="register",
@@ -91,6 +97,7 @@ def test_task_human_challenge_rejects_stale_challenge_id():
         progress_total=1,
     )
     task_id = task["task_id"]
+    _mark_running(task_id)
 
     holder: dict[str, ChallengeResponse] = {}
 
@@ -103,35 +110,29 @@ def test_task_human_challenge_rejects_stale_challenge_id():
 
     thread = threading.Thread(target=run_challenge)
     thread.start()
-    assert _wait_until(lambda: (get_task(task_id) or {}).get("status") == TASK_STATUS_WAITING_USER)
+    assert _wait_until(
+        lambda: bool(((get_task(task_id) or {}).get("result") or {}).get("challenge"))
+    )
 
+    challenge = (get_task(task_id) or {})["result"]["challenge"]
     assert resolve_task_challenge(
         task_id,
         ChallengeResponse(completed=True),
         challenge_id="stale-id",
-    ) is None
-    assert (get_task(task_id) or {})["status"] == TASK_STATUS_WAITING_USER
+    ) is False
 
-    current_id = (get_task(task_id) or {})["challenge"]["id"]
     assert resolve_task_challenge(
         task_id,
         ChallengeResponse(completed=True),
-        challenge_id=current_id,
-    ) is not None
+        challenge_id=challenge["id"],
+    ) is True
     thread.join(timeout=2)
     assert holder["response"].completed is True
 
 
-def test_waiting_user_is_recovered_as_interrupted_after_restart():
-    from application.tasks import (
-        TASK_STATUS_INTERRUPTED,
-        TASK_STATUS_WAITING_USER,
-        create_task,
-        get_task,
-        mark_incomplete_tasks_interrupted,
-    )
-    from core.db import TaskModel, engine
-    from sqlmodel import Session
+def test_task_human_challenge_stops_when_task_is_cancelled():
+    from application.tasks import create_task, request_cancel
+    from core.task_challenges import request_human_challenge
 
     task = create_task(
         task_type="register",
@@ -140,12 +141,22 @@ def test_waiting_user_is_recovered_as_interrupted_after_restart():
         progress_total=1,
     )
     task_id = task["task_id"]
-    with Session(engine) as session:
-        model = session.get(TaskModel, task_id)
-        assert model is not None
-        model.status = TASK_STATUS_WAITING_USER
-        session.add(model)
-        session.commit()
+    _mark_running(task_id)
 
-    mark_incomplete_tasks_interrupted()
-    assert (get_task(task_id) or {})["status"] == TASK_STATUS_INTERRUPTED
+    holder: dict[str, ChallengeResponse] = {}
+
+    def run_challenge() -> None:
+        holder["response"] = request_human_challenge(
+            task_id,
+            ChallengeRequest(kind="security_check"),
+            timeout=2,
+        )
+
+    thread = threading.Thread(target=run_challenge)
+    thread.start()
+    time.sleep(0.05)
+    request_cancel(task_id)
+    thread.join(timeout=2)
+
+    assert thread.is_alive() is False
+    assert holder["response"].completed is False
