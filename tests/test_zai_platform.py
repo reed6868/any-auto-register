@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 
 def test_zai_is_exposed_with_browser_email_and_oauth_capabilities(client):
     response = client.get("/api/platforms")
@@ -64,3 +66,20 @@ def test_zai_plugin_builds_browser_adapter_without_protocol_registration():
     assert adapter.oauth_runner is not None
     assert platform.build_protocol_mailbox_adapter() is None
     assert platform.build_protocol_oauth_adapter() is None
+
+
+def test_zai_default_instance_can_check_saved_account_but_cannot_register_protocol():
+    from core.base_platform import Account, RegisterConfig
+    from platforms.zai.plugin import ZAIPlatform
+
+    platform = ZAIPlatform(config=RegisterConfig())
+    account = Account(
+        platform="zai",
+        email="zai@example.com",
+        password="secret",
+        extra={"cookies": "zai_session=1"},
+    )
+
+    assert platform.check_valid(account) is True
+    with pytest.raises(NotImplementedError, match="headed"):
+        platform.register(email="zai@example.com", password="secret")
