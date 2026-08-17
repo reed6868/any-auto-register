@@ -32,6 +32,19 @@ def test_assert_complete_oauth_callback_rejects_partial_payload():
         })
 
 
+def test_assert_complete_oauth_callback_allows_explicit_nextauth_partial_payload():
+    _assert_complete_oauth_callback(
+        {
+            "account_id": "acct_123",
+            "access_token": "at_123",
+            "refresh_token": "",
+            "id_token": "",
+            "session_token": "sess_123",
+        },
+        allow_nextauth_partial=True,
+    )
+
+
 def test_generate_chatgpt_registration_password_meets_openai_strength_requirements():
     for _ in range(8):
         password = _generate_chatgpt_registration_password()
