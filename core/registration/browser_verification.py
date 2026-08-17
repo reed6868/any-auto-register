@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 
 def _first_visible(page, selectors: tuple[str, ...]):
@@ -77,10 +78,11 @@ def _inject_turnstile_response(page, token: str) -> bool:
 
 
 class BrowserVerificationSupport:
-    """Bridge browser verification steps to the framework's configured providers.
+    """Bridge platform-owned browser verification to configured providers.
 
-    The helper only operates on explicit standard browser surfaces. Unsupported or
-    unrecognized security steps remain the responsibility of HumanChallenge.
+    Automatic providers can be scoped to the platform's own domains so an OAuth
+    provider's Google/GitHub security page is never treated as a rented-phone or
+    platform captcha step. Unknown/third-party security stays HumanChallenge.
     """
 
     def __init__(
@@ -88,10 +90,16 @@ class BrowserVerificationSupport:
         *,
         captcha_solver: Any = None,
         phone_callback: Callable[[], str] | None = None,
+        allowed_domain_substrings: tuple[str, ...] = (),
         log_fn=None,
     ):
         self.captcha_solver = captcha_solver
         self.phone_callback = phone_callback
+        self.allowed_domain_substrings = tuple(
+            str(item or "").strip().lower()
+            for item in allowed_domain_substrings
+            if str(item or "").strip()
+        )
         self.log = log_fn or (lambda message: None)
         self._captcha_attempts: set[str] = set()
         self._phone_started = False
@@ -102,7 +110,19 @@ class BrowserVerificationSupport:
     def phone_started(self) -> bool:
         return self._phone_started
 
+    def _is_allowed_page(self, page) -> bool:
+        if not self.allowed_domain_substrings:
+            return True
+        url = str(getattr(page, "url", "") or "")
+        try:
+            host = (urlparse(url).hostname or "").lower()
+        except Exception:
+            host = ""
+        return bool(host and any(part in host for part in self.allowed_domain_substrings))
+
     def try_turnstile(self, page) -> bool:
+        if not self._is_allowed_page(page):
+            return False
         site_key = _turnstile_sitekey(page)
         if not site_key:
             return False
@@ -129,7 +149,7 @@ class BrowserVerificationSupport:
             return False
 
     def try_phone(self, page) -> bool:
-        if not self.phone_callback:
+        if not self._is_allowed_page(page) or not self.phone_callback:
             return False
 
         if not self._phone_started:
@@ -181,6 +201,8 @@ class BrowserVerificationSupport:
         return True
 
     def try_handle(self, page) -> bool:
+        if not self._is_allowed_page(page):
+            return False
         if self.try_turnstile(page):
             return True
         return self.try_phone(page)
