@@ -94,6 +94,27 @@ def _click_text(page, labels: tuple[str, ...]) -> bool:
     return False
 
 
+def _submit_password_surface(page, password: str) -> None:
+    """Fill every visible password field before clicking the account submit action."""
+    password_fields = page.locator('input[type="password"]')
+    count = password_fields.count()
+    if count <= 0:
+        raise RuntimeError("Z.AI 未找到密码输入框")
+    filled = 0
+    for index in range(count):
+        try:
+            field = password_fields.nth(index)
+            if field.is_visible(timeout=300):
+                field.fill(password)
+                filled += 1
+        except Exception:
+            pass
+    if filled <= 0:
+        raise RuntimeError("Z.AI 未找到可见密码输入框")
+    if not _click_text(page, ("Sign Up", "Create Account", "Continue", "Next", "Log In", "Login")):
+        raise RuntimeError("Z.AI 已填写密码，但未找到提交按钮")
+
+
 def _storage_snapshot(page) -> dict:
     try:
         return page.evaluate("""() => ({localStorage: Object.fromEntries(Object.entries(localStorage)), sessionStorage: Object.fromEntries(Object.entries(sessionStorage))})""") or {}
@@ -240,23 +261,7 @@ class ZAIBrowserRegister:
                     time.sleep(1)
                     continue
                 if surface is AuthSurface.PASSWORD:
-                    lowered = text.lower()
-                    if "sign up" in lowered or "create account" in lowered or "don't have an account" in lowered:
-                        _click_text(page, ("Sign Up", "Create Account"))
-                        time.sleep(0.5)
-                    password_fields = page.locator('input[type="password"]')
-                    count = password_fields.count()
-                    if count <= 0:
-                        raise RuntimeError("Z.AI 未找到密码输入框")
-                    for index in range(count):
-                        try:
-                            field = password_fields.nth(index)
-                            if field.is_visible(timeout=300):
-                                field.fill(password)
-                        except Exception:
-                            pass
-                    if not _click_text(page, ("Sign Up", "Create Account", "Continue", "Next", "Log In", "Login")):
-                        raise RuntimeError("Z.AI 已填写密码，但未找到提交按钮")
+                    _submit_password_surface(page, password)
                     time.sleep(1)
                     continue
                 if surface is AuthSurface.OTP:
