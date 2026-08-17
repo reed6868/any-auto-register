@@ -4,6 +4,7 @@ import threading
 import time
 from types import SimpleNamespace
 
+from application.tasks_query import TasksQueryService
 from core.registration import ChallengeRequest, ChallengeResponse, RegistrationContext
 
 
@@ -52,9 +53,9 @@ def test_registration_context_only_builds_challenge_callback_from_bound_task_log
     assert callable(_context(platform=platform).challenge_callback)
 
 
-def test_task_human_challenge_waits_for_user_and_clears_result():
+def test_task_human_challenge_waits_for_user_and_is_exposed_by_task_query():
     from application.tasks import TASK_STATUS_RUNNING, create_task, get_task
-    from core.task_challenges import request_human_challenge, resolve_task_challenge
+    from core.task_challenges import get_task_challenge, request_human_challenge, resolve_task_challenge
 
     task = create_task(
         task_type="register",
@@ -82,16 +83,16 @@ def test_task_human_challenge_waits_for_user_and_clears_result():
     thread = threading.Thread(target=run_challenge)
     thread.start()
 
-    assert _wait_until(
-        lambda: bool(((get_task(task_id) or {}).get("result") or {}).get("challenge"))
-    )
-    waiting = get_task(task_id)
-    assert waiting is not None
-    assert waiting["status"] == TASK_STATUS_RUNNING
-    assert waiting["terminal"] is False
-    challenge = waiting["result"]["challenge"]
+    assert _wait_until(lambda: bool(get_task_challenge(task_id)))
+    challenge = get_task_challenge(task_id)
+    assert challenge is not None
     assert challenge["kind"] == "oauth_confirmation"
     assert challenge["url"] == "https://chat.z.ai/auth"
+
+    queried = TasksQueryService().get_task(task_id)
+    assert queried is not None
+    assert queried["status"] == TASK_STATUS_RUNNING
+    assert queried["result"]["challenge"]["id"] == challenge["id"]
 
     resolved = resolve_task_challenge(
         task_id,
@@ -103,16 +104,19 @@ def test_task_human_challenge_waits_for_user_and_clears_result():
     thread.join(timeout=2)
     assert thread.is_alive() is False
     assert holder["response"].completed is True
+    assert get_task_challenge(task_id) is None
 
     resumed = get_task(task_id)
     assert resumed is not None
     assert resumed["status"] == TASK_STATUS_RUNNING
-    assert resumed["result"].get("challenge") is None
+    queried_after = TasksQueryService().get_task(task_id)
+    assert queried_after is not None
+    assert queried_after["result"].get("challenge") is None
 
 
 def test_task_human_challenge_rejects_stale_challenge_id():
-    from application.tasks import create_task, get_task
-    from core.task_challenges import request_human_challenge, resolve_task_challenge
+    from application.tasks import create_task
+    from core.task_challenges import get_task_challenge, request_human_challenge, resolve_task_challenge
 
     task = create_task(
         task_type="register",
@@ -134,11 +138,10 @@ def test_task_human_challenge_rejects_stale_challenge_id():
 
     thread = threading.Thread(target=run_challenge)
     thread.start()
-    assert _wait_until(
-        lambda: bool(((get_task(task_id) or {}).get("result") or {}).get("challenge"))
-    )
+    assert _wait_until(lambda: bool(get_task_challenge(task_id)))
 
-    challenge = (get_task(task_id) or {})["result"]["challenge"]
+    challenge = get_task_challenge(task_id)
+    assert challenge is not None
     assert resolve_task_challenge(
         task_id,
         ChallengeResponse(completed=True),
