@@ -13,7 +13,6 @@ function shortId(id: string) {
 
 function formatError(error: string | null | undefined): string {
   if (!error) return ''
-  // Try to extract a readable message from JSON-like strings
   try {
     if (error.startsWith('{') || error.startsWith('[')) {
       const parsed = JSON.parse(error)
@@ -27,7 +26,6 @@ function formatError(error: string | null | undefined): string {
   } catch {
     // not JSON
   }
-  // Truncate long strings
   return error.length > 100 ? error.slice(0, 100) + '...' : error
 }
 
@@ -37,6 +35,7 @@ export default function TaskHistory() {
   const [status, setStatus] = useState('')
   const [platforms, setPlatforms] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
+  const [resolvingChallenge, setResolvingChallenge] = useState('')
 
   const load = async () => {
     setLoading(true)
@@ -61,11 +60,30 @@ export default function TaskHistory() {
     load()
   }, [platform, status])
 
+  const resolveChallenge = async (task: any, completed: boolean) => {
+    const challenge = task?.result?.challenge
+    if (!challenge?.id) return
+    setResolvingChallenge(challenge.id)
+    try {
+      await apiFetch(`/tasks/${task.id}/challenge`, {
+        method: 'POST',
+        body: JSON.stringify({
+          completed,
+          challenge_id: challenge.id,
+        }),
+      })
+      await load()
+    } finally {
+      setResolvingChallenge('')
+    }
+  }
+
   const succeeded = tasks.filter((t) => t.status === 'succeeded').length
   const failed = tasks.filter((t) => t.status === 'failed').length
   const running = tasks.filter((t) =>
     ['running', 'claimed', 'pending', 'cancel_requested'].includes(t.status)
   ).length
+  const activeChallenges = tasks.filter((task) => task?.result?.challenge?.id)
 
   const metricCards = [
     { label: '任务数', value: tasks.length, icon: Activity, tone: 'text-[var(--accent)]' },
@@ -76,7 +94,6 @@ export default function TaskHistory() {
 
   return (
     <div className="space-y-5">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-[var(--text-primary)]">任务记录</h1>
         <Button variant="outline" size="sm" onClick={load} disabled={loading}>
@@ -85,7 +102,6 @@ export default function TaskHistory() {
         </Button>
       </div>
 
-      {/* Metrics */}
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
         {metricCards.map(({ label, value, icon: Icon, tone }) => (
           <div
@@ -103,7 +119,44 @@ export default function TaskHistory() {
         ))}
       </div>
 
-      {/* Filters — inline with table header */}
+      {activeChallenges.map((task) => {
+        const challenge = task.result.challenge
+        return (
+          <div
+            key={`${task.id}:${challenge.id}`}
+            className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4"
+          >
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
+              <div className="min-w-0 flex-1">
+                <div className="font-medium text-[var(--text-primary)]">等待人工验证 · {task.platform}</div>
+                <div className="mt-1 text-sm text-[var(--text-secondary)]">
+                  {challenge.message || '请在当前任务的可视浏览器/noVNC 中完成验证。'}
+                </div>
+                <div className="mt-1 break-all text-xs text-[var(--text-muted)]">{challenge.url || ''}</div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => resolveChallenge(task, true)}
+                    disabled={resolvingChallenge === challenge.id}
+                  >
+                    我已完成，继续
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => resolveChallenge(task, false)}
+                    disabled={resolvingChallenge === challenge.id}
+                  >
+                    无法完成
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      })}
+
       <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
         <div className="flex items-center gap-3 border-b border-[var(--border)] px-4 py-2.5">
           <span className="text-sm font-medium text-[var(--text-primary)]">最近任务</span>

@@ -467,34 +467,25 @@ def _auto_push_any2api(task_logger: TaskLogger, account) -> None:
 
 
 def _auto_upload_cpa(task_logger: TaskLogger, account) -> None:
-    if getattr(account, "platform", "") != "chatgpt":
-        return
+    """账号已落库后按平台能力同步到 CPA；同步失败不回滚注册结果。"""
     try:
-        from core.config_store import config_store
+        from core.cpa_sync import sync_account_to_cpa
 
-        cpa_url = config_store.get("cpa_api_url", "")
-        if cpa_url:
-            from platforms.chatgpt.cpa_upload import generate_token_json, upload_to_cpa
-
-            class _AccountProxy:
-                pass
-
-            target = _AccountProxy()
-            target.email = account.email
-            extra = account.extra or {}
-            target.access_token = extra.get("access_token") or account.token
-            target.refresh_token = extra.get("refresh_token", "")
-            target.id_token = extra.get("id_token", "")
-            target.session_token = extra.get("session_token", "")
-            target.user_id = account.user_id or ""
-            target.account_id = account.user_id or ""
-            target.cookies = extra.get("cookies", "")
-
-            token_data = generate_token_json(target)
-            ok, msg = upload_to_cpa(token_data)
-            task_logger.log(f"  [CPA] {'✓ ' + msg if ok else '✗ ' + msg}")
+        result = sync_account_to_cpa(
+            account,
+            task_id=task_logger.task_id,
+            log_fn=task_logger.log,
+        )
+        if not result.attempted:
+            return
+        if result.ok:
+            task_logger.log(f"  [CPA] ✓ {result.message}")
+        elif not result.supported:
+            task_logger.log(f"  [CPA] ↪ {result.message}", level="warning")
+        else:
+            task_logger.log(f"  [CPA] ✗ {result.message}", level="warning")
     except Exception as exc:
-        task_logger.log(f"  [CPA] 自动上传异常: {exc}", level="warning")
+        task_logger.log(f"  [CPA] 自动同步异常: {exc}", level="warning")
 
 
 def _build_platform_instance(platform_name: str, payload: dict[str, Any], logger: TaskLogger, resolved_proxy: str | None = None, shared_mailbox=None):

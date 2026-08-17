@@ -13,6 +13,7 @@ export function TaskLogPanel({
   const [lines, setLines] = useState<string[]>([])
   const [task, setTask] = useState<any | null>(null)
   const [doneStatus, setDoneStatus] = useState<string | null>(null)
+  const [resolvingChallenge, setResolvingChallenge] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const seenEventIdsRef = useRef<Set<number>>(new Set())
   const cursorRef = useRef(0)
@@ -34,6 +35,7 @@ export function TaskLogPanel({
     setLines([])
     setTask(null)
     setDoneStatus(null)
+    setResolvingChallenge(false)
 
     const pushEvent = (payload: any) => {
       const eventId = Number(payload?.id || 0)
@@ -87,17 +89,19 @@ export function TaskLogPanel({
     syncTask().catch(() => {})
 
     const poll = window.setInterval(async () => {
-      if (doneRef.current || sseHealthyRef.current) return
+      if (doneRef.current) return
       try {
-        const data = await apiFetch(`/tasks/${taskId}/events?since=${cursorRef.current}`)
-        for (const item of data.items || []) {
-          pushEvent(item)
+        if (!sseHealthyRef.current) {
+          const data = await apiFetch(`/tasks/${taskId}/events?since=${cursorRef.current}`)
+          for (const item of data.items || []) {
+            pushEvent(item)
+          }
         }
         await syncTask()
       } catch {
         // passive
       }
-    }, 1000)
+    }, 2000)
 
     return () => {
       sseHealthyRef.current = false
@@ -117,6 +121,7 @@ export function TaskLogPanel({
   const progressCurrent = Number(progress.current || 0)
   const progressPercent = progressTotal > 0 ? Math.min(100, Math.round((progressCurrent / progressTotal) * 100)) : 0
   const errorText = task?.error || (Array.isArray(task?.errors) ? task.errors[0] : '')
+  const challenge = !isTerminalTaskStatus(currentStatus) ? task?.result?.challenge : null
   const statusTone =
     currentStatus === 'succeeded' ? 'border-emerald-400/40 bg-emerald-400/10 text-emerald-200' :
     currentStatus === 'failed' ? 'border-red-400/40 bg-red-400/10 text-red-200' :
@@ -125,6 +130,24 @@ export function TaskLogPanel({
 
   const copyLogs = () => {
     navigator.clipboard?.writeText(lines.join('\n')).catch(() => {})
+  }
+
+  const resolveChallenge = async (completed: boolean) => {
+    if (!challenge?.id || resolvingChallenge) return
+    setResolvingChallenge(true)
+    try {
+      await apiFetch(`/tasks/${taskId}/challenge`, {
+        method: 'POST',
+        body: JSON.stringify({
+          completed,
+          challenge_id: challenge.id,
+        }),
+      })
+      const latest = await apiFetch(`/tasks/${taskId}`)
+      setTask(latest)
+    } finally {
+      setResolvingChallenge(false)
+    }
   }
 
   return (
@@ -154,6 +177,46 @@ export function TaskLogPanel({
           style={{ width: `${progressTotal > 0 ? progressPercent : (isTerminalTaskStatus(currentStatus) ? 100 : 18)}%` }}
         />
       </div>
+
+      {challenge ? (
+        <div className="rounded-2xl border border-amber-400/35 bg-amber-500/10 px-4 py-4 text-sm text-amber-100">
+          <div className="font-semibold">等待人工验证</div>
+          <div className="mt-1 text-amber-100/85">
+            {challenge.message || '请在当前任务的可视浏览器/noVNC 中完成验证。'}
+          </div>
+          {challenge.url ? (
+            <div className="mt-2 space-y-1.5">
+              <a
+                href={challenge.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex rounded-full border border-amber-300/40 px-3 py-1.5 text-xs font-medium text-amber-100 hover:bg-amber-200/10"
+              >
+                打开验证页面 ↗
+              </a>
+              <div className="break-all font-mono text-xs text-amber-100/65">{challenge.url}</div>
+            </div>
+          ) : null}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={resolvingChallenge}
+              onClick={() => resolveChallenge(true)}
+              className="rounded-full bg-amber-200 px-3 py-1.5 text-xs font-medium text-amber-950 disabled:opacity-50"
+            >
+              我已完成，继续
+            </button>
+            <button
+              type="button"
+              disabled={resolvingChallenge}
+              onClick={() => resolveChallenge(false)}
+              className="rounded-full border border-amber-300/40 px-3 py-1.5 text-xs text-amber-100 disabled:opacity-50"
+            >
+              无法完成
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {errorText ? (
         <div className="rounded-2xl border border-red-400/35 bg-red-500/10 px-4 py-3 text-sm text-red-100">

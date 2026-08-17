@@ -14,6 +14,8 @@ from application.tasks import (
     list_task_events,
     request_cancel,
 )
+from core.registration import ChallengeResponse
+from core.task_challenges import resolve_task_challenge
 from services.task_runtime import task_runtime
 
 
@@ -28,6 +30,20 @@ class TaskCommandsService:
         if task:
             task_runtime.wake_up()
         return task
+
+    def resolve_challenge(
+        self,
+        task_id: str,
+        *,
+        completed: bool,
+        value: str = "",
+        challenge_id: str = "",
+    ) -> bool:
+        return resolve_task_challenge(
+            task_id,
+            ChallengeResponse(completed=completed, value=value),
+            challenge_id=challenge_id,
+        )
 
     async def stream_task_events(self, task_id: str, *, since: int = 0) -> AsyncIterator[str]:
         cursor = since

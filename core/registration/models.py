@@ -37,6 +37,21 @@ class RegistrationContext:
     def extra(self) -> dict[str, Any]:
         return dict(getattr(self.config, "extra", {}) or {})
 
+    @property
+    def challenge_callback(self) -> Callable[[ChallengeRequest], ChallengeResponse] | None:
+        from core.task_challenges import build_task_challenge_callback
+
+        bound_logger = getattr(self.platform, "_log_fn", None)
+        task_logger = getattr(bound_logger, "__self__", None)
+        task_id = str(getattr(task_logger, "task_id", "") or "").strip()
+        if not task_id:
+            return None
+        try:
+            timeout = float(self.extra.get("human_challenge_timeout") or 600)
+        except (TypeError, ValueError):
+            timeout = 600
+        return build_task_challenge_callback(task_id, timeout=max(timeout, 1))
+
     def log(self, message: str) -> None:
         self.log_fn(message)
 
