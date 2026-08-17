@@ -6,7 +6,8 @@ from infrastructure.provider_settings_repository import ProviderSettingsReposito
 
 def test_resolve_sms_provider_for_task_uses_saved_herosms_default():
     repo = ProviderSettingsRepository()
-    repo.save(
+    repo.definitions.ensure_seeded()
+    saved = repo.save(
         setting_id=None,
         provider_type="sms",
         provider_key="herosms",
@@ -22,6 +23,8 @@ def test_resolve_sms_provider_for_task_uses_saved_herosms_default():
         auth={"herosms_api_key": "hero123"},
         metadata={},
     )
+
+    assert saved.provider_key == "herosms_api"
 
     provider_key, settings = _resolve_sms_provider_for_task({})
 

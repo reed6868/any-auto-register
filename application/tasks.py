@@ -596,11 +596,9 @@ def execute_task(task_id: str) -> None:
 
 
 def _resolve_sms_provider_for_task(extra: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    from infrastructure.provider_definitions_repository import ProviderDefinitionsRepository
     from infrastructure.provider_settings_repository import ProviderSettingsRepository
 
     settings_repo = ProviderSettingsRepository()
-    definitions_repo = ProviderDefinitionsRepository()
     provider_key = str(
         extra.get("sms_provider")
         or extra.get("phone_provider")
@@ -609,8 +607,7 @@ def _resolve_sms_provider_for_task(extra: dict[str, Any]) -> tuple[str, dict[str
     ).strip()
     if not provider_key:
         provider_key = "sms_activate" if extra.get("sms_activate_api_key") else ""
-    definition = definitions_repo.get_by_key("sms", provider_key) if provider_key else None
-    settings = settings_repo.resolve_runtime_settings("sms", provider_key, extra) if definition else dict(extra)
+    settings = settings_repo.resolve_runtime_settings("sms", provider_key, extra) if provider_key else dict(extra)
     return provider_key, settings
 
 

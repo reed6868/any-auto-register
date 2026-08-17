@@ -78,7 +78,6 @@ class TestCreateSmsProvider:
 
 class TestCreatePhoneCallbacks:
     def test_returns_tuple(self):
-        # This will fail on actual API call, but we can test the structure
         callback, cleanup = create_phone_callbacks(
             "sms_activate",
             {"sms_activate_api_key": "test"},
@@ -336,7 +335,7 @@ class TestHeroSmsProvider:
 
         assert activation.activation_id == "act_1"
         assert activation.phone_number == "+15551234"
-        assert calls[0]["action"] == "getNumberV2"
+        assert [call["action"] for call in calls[:2]] == ["getPrices", "getNumberV2"]
 
     def test_get_number_falls_back_to_v1_text(self, monkeypatch, tmp_path):
         monkeypatch.setattr(sms_module, "hero_sms_cache_file", lambda: tmp_path / ".herosms_phone_cache.json")
@@ -365,7 +364,7 @@ class TestHeroSmsProvider:
 
         assert activation.activation_id == "act_2"
         assert activation.phone_number == "+15557654321"
-        assert calls == ["getNumberV2", "getNumber"]
+        assert calls == ["getPrices", "getNumberV2", "getNumber"]
 
     def test_get_code_skips_attempted_sms_event(self, monkeypatch, tmp_path):
         monkeypatch.setattr(sms_module, "hero_sms_cache_file", lambda: tmp_path / ".herosms_phone_cache.json")

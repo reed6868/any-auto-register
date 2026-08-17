@@ -42,11 +42,26 @@ class RegistrationContext:
 
 
 @dataclass(slots=True)
+class ChallengeRequest:
+    kind: str
+    message: str = ""
+    url: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ChallengeResponse:
+    completed: bool
+    value: str = ""
+
+
+@dataclass(slots=True)
 class RegistrationArtifacts:
     otp_callback: Callable[[], str] | None = None
     verification_link_callback: Callable[[], str] | None = None
     phone_callback: Callable[[], str] | None = None
     phone_cleanup: Callable[[], None] | None = None
+    challenge_callback: Callable[[ChallengeRequest], ChallengeResponse] | None = None
     captcha_solver: Any = None
     executor: Any = None
     raw_result: Any = None
