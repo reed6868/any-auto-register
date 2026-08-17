@@ -43,7 +43,7 @@ class BrowserRegistrationFlow:
         if self.adapter.capability.browser_mailbox_requires_mailbox:
             ensure_mailbox_identity(ctx, f"{ctx.platform_display_name} 浏览器邮箱注册依赖 mailbox provider")
 
-        artifacts = RegistrationArtifacts()
+        artifacts = RegistrationArtifacts(challenge_callback=ctx.challenge_callback)
         if self.adapter.use_captcha_for_mailbox and getattr(ctx.identity, "identity_provider", "") == "mailbox":
             artifacts.captcha_solver = ctx.platform._make_captcha()
         if self.adapter.otp_spec:
@@ -90,7 +90,7 @@ class ProtocolMailboxFlow:
         if self.adapter.capability.protocol_mailbox_requires_mailbox:
             ensure_mailbox_identity(ctx, f"{ctx.platform_display_name} 注册流程依赖 mailbox provider，当前未获取到邮箱账号")
 
-        artifacts = RegistrationArtifacts()
+        artifacts = RegistrationArtifacts(challenge_callback=ctx.challenge_callback)
         if self.adapter.use_captcha:
             artifacts.captcha_solver = ctx.platform._make_captcha()
         if self.adapter.otp_spec:
