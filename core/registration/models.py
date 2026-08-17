@@ -40,9 +40,10 @@ class RegistrationContext:
     @property
     def challenge_callback(self) -> Callable[[ChallengeRequest], ChallengeResponse] | None:
         from core.task_challenges import build_task_challenge_callback
-        from core.task_context import get_current_task_id
 
-        task_id = get_current_task_id()
+        bound_logger = getattr(self.platform, "_log_fn", None)
+        task_logger = getattr(bound_logger, "__self__", None)
+        task_id = str(getattr(task_logger, "task_id", "") or "").strip()
         if not task_id:
             return None
         try:
