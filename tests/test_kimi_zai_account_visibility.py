@@ -5,13 +5,19 @@ from core.base_platform import Account
 from core.db import save_account
 
 
-def _save_browser_account(platform: str, email: str, password: str, cookie: str):
+def _save_browser_account(
+    platform: str,
+    email: str,
+    password: str,
+    cookie: str = "",
+    storage_state: str = "{}",
+):
     return save_account(
         Account(
             platform=platform,
             email=email,
             password=password,
-            extra={"cookies": cookie, "storage_state": "{}"},
+            extra={"cookies": cookie, "storage_state": storage_state},
         )
     )
 
@@ -37,6 +43,21 @@ def test_kimi_and_zai_saved_accounts_complete_existing_account_check_tasks():
     saved = [
         _save_browser_account("kimi", "kimi-check@example.com", "", "kimi_session=1"),
         _save_browser_account("zai", "zai-check@example.com", "TestPass123!", "zai_session=1"),
+    ]
+
+    for model in saved:
+        task = create_account_check_task(int(model.id))
+        execute_task(task["task_id"])
+        result = get_task(task["task_id"])
+        assert result is not None
+        assert result["status"] == TASK_STATUS_SUCCEEDED
+        assert result["result"]["data"]["valid"] is True
+
+
+def test_browser_storage_only_session_remains_valid_after_account_graph_round_trip():
+    saved = [
+        _save_browser_account("kimi", "kimi-storage@example.com", "", storage_state='{"localStorage":{"session":"kimi"}}'),
+        _save_browser_account("zai", "zai-storage@example.com", "secret", storage_state='{"localStorage":{"session":"zai"}}'),
     ]
 
     for model in saved:
